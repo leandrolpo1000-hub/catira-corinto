@@ -1,0 +1,9 @@
+node_modules/
+backend/data/
+backend/uploads/
+backend/data/*.tmp
+dist/
+.DS_Store
+*.log
+.env
+.github-token

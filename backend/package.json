@@ -1,0 +1,20 @@
+{
+  "name": "catira-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "test": "node src/action.test.js && node src/lance.test.js && node src/categories.test.js && node src/trades.test.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "nodemailer": "^10.0.10",
+    "qrcode": "^1.5.4"
+  }
+}
