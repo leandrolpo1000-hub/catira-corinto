@@ -1751,8 +1751,15 @@ button.link { background: none; border: 0; padding: 0; cursor: pointer; font-fam
   display: inline-flex; align-items: center; justify-content: center;
 }
 .acao-mic.rec {
-  background: var(--danger-soft); color: var(--danger);
+  background: var(--danger); color: #fff;
   animation: acao-mic-pulse 1.2s ease-in-out infinite;
+}
+.acao-stop-icon {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: currentColor;
 }
 @keyframes acao-mic-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(155, 34, 38, 0.35); }

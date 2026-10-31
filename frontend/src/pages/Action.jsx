@@ -175,7 +175,6 @@ export function ActionCreate() {
   const [audioUrl, setAudioUrl] = useState('');
   const [recording, setRecording] = useState(false);
   const [recSec, setRecSec] = useState(0);
-  const [transcribing, setTranscribing] = useState(false);
   const recRef = useRef(null);
   const audioUrlRef = useRef('');
   const textRef = useRef('');
@@ -229,10 +228,39 @@ export function ActionCreate() {
     });
   }
 
+  function keepRecording(blob, mime) {
+    if (!blob || blob.size < 200) return;
+    const ext = /mp4/i.test(mime) ? 'm4a' : /ogg/i.test(mime) ? 'ogg' : 'webm';
+    const file = new File([blob], 'acao-audio.' + ext, { type: mime || blob.type || 'audio/webm' });
+    if (file.size > 8 * 1024 * 1024) {
+      setErr('O áudio pode ter no máximo 8 MB. Grave um pouco mais curto.');
+      return;
+    }
+    setAudioUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
+    setAudio(file);
+  }
+
+  function finishSession(rec) {
+    if (!rec || rec.discard) return;
+    const live = String(rec.spoken || textRef.current || '').trim();
+    const before = rec.captionBefore || '';
+    if (live && live !== before) {
+      textRef.current = live;
+      setText(live);
+      setErr('');
+      return;
+    }
+    if (!live) setErr('Não deu para passar o áudio para o texto. Escreva o que falou.');
+  }
+
   function stopRecorder() {
     const rec = recRef.current;
-    if (!rec) return;
+    if (!rec || rec.stopping) return;
     rec.stopping = true;
+    setRecording(false);
     if (rec.timer) {
       clearInterval(rec.timer);
       rec.timer = null;
@@ -242,85 +270,69 @@ export function ActionCreate() {
     }
     if (rec.media && rec.media.state !== 'inactive') {
       try { rec.media.stop(); } catch {}
+      return;
     }
+    if (rec.stream) rec.stream.getTracks().forEach((t) => t.stop());
+    if (recRef.current === rec) recRef.current = null;
+    finishSession(rec);
   }
 
-  function startSpeech() {
+  function startVoiceCaption(rec) {
     const SR = speechEngine();
-    if (!SR) return null;
+    if (!SR || !rec) return null;
     const speech = new SR();
     speech.lang = 'pt-BR';
     speech.interimResults = true;
-    speech.continuous = true;
-    speech.maxAlternatives = 1;
-    speech.baseText = textRef.current.trim();
+    speech.continuous = false;
+    speech.maxAlternatives = 3;
+    const baseText = rec.captionBefore || '';
     let finalText = '';
+    let lastText = '';
     speech.onresult = (e) => {
-      let interim = '';
+      rec.heard = true;
+      let piece = '';
       for (let i = e.resultIndex; i < e.results.length; i += 1) {
-        const piece = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalText = joinCaption(finalText, piece);
-        else interim += piece;
+        piece += e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalText += e.results[i][0].transcript;
       }
-      const next = joinCaption(speech.baseText, joinCaption(finalText, interim));
-      textRef.current = next;
-      setText(next);
+      lastText = piece.trim();
+      const spoken = (finalText || lastText).trim();
+      rec.spoken = joinCaption(baseText, spoken);
+      textRef.current = rec.spoken;
+      setText(rec.spoken);
     };
-    speech.onerror = () => {};
+    speech.onerror = (e) => {
+      const name = e && e.error;
+      if (name === 'not-allowed' || name === 'service-not-allowed') {
+        rec.speechBlocked = true;
+        setErr('Permita o acesso ao microfone para gravar o áudio.');
+      }
+    };
     speech.onend = () => {
-      const rec = recRef.current;
-      if (!rec || rec.speech !== speech || rec.discard || rec.stopping) return;
-      if (rec.media && rec.media.state === 'recording') {
-        try { speech.start(); } catch {}
-      }
+      if (rec.speech !== speech) return;
+      const spoken = (finalText || lastText).trim();
+      if (spoken) rec.spoken = joinCaption(baseText, spoken);
+      if (rec.discard || rec.stopping || rec.speechBlocked) return;
+      try { speech.start(); } catch {}
     };
+    rec.speech = speech;
+    rec.started = new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      speech.onstart = finish;
+      setTimeout(finish, 400);
+    });
     try {
       speech.start();
       return speech;
     } catch {
+      rec.speech = null;
       return null;
     }
-  }
-
-  async function fillFromAudio(file, beforeText) {
-    const before = String(beforeText || '').trim();
-    if (textRef.current.trim() !== before && textRef.current.trim()) return;
-    setTranscribing(true);
-    try {
-      const fd = new FormData();
-      fd.append('audio', file);
-      const d = await api('/api/acao/transcribe', { method: 'POST', body: fd });
-      const spoken = String((d && d.text) || '').trim();
-      if (!spoken) return;
-      if (textRef.current.trim() !== before && textRef.current.trim()) return;
-      const next = joinCaption(before, spoken);
-      textRef.current = next;
-      setText(next);
-    } catch {
-      if (!textRef.current.trim()) setErr('Não deu para passar o áudio para o texto. Escreva o que falou.');
-    } finally {
-      setTranscribing(false);
-    }
-  }
-
-  function keepRecording(blob, mime, captionBefore) {
-    if (!blob || blob.size < 200) {
-      setErr('Não deu para gravar. Tente de novo.');
-      return;
-    }
-    const ext = /mp4/i.test(mime) ? 'm4a' : /ogg/i.test(mime) ? 'ogg' : 'webm';
-    const file = new File([blob], 'acao-audio.' + ext, { type: mime || blob.type || 'audio/webm' });
-    if (file.size > 8 * 1024 * 1024) {
-      setErr('O áudio pode ter no máximo 8 MB. Grave um pouco mais curto.');
-      return;
-    }
-    setErr('');
-    setAudioUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return URL.createObjectURL(file);
-    });
-    setAudio(file);
-    fillFromAudio(file, captionBefore || '');
   }
 
   async function toggleRecord() {
@@ -329,57 +341,33 @@ export function ActionCreate() {
       return;
     }
     if (recRef.current) return;
-    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setErr('Seu navegador não grava áudio.');
+    const SR = speechEngine();
+    if (!SR) {
+      setErr('Seu navegador não transcreve áudio. Escreva o que falou.');
       return;
     }
     setErr('');
-    const speech = startSpeech();
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
-      try { if (speech) speech.stop(); } catch {}
-      setErr('Permita o microfone para gravar o áudio.');
-      return;
-    }
-    const mime = pickRecorderMime();
-    const chunks = [];
-    let media;
-    try {
-      media = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
-    } catch {
-      stream.getTracks().forEach((t) => t.stop());
-      try { if (speech) speech.stop(); } catch {}
-      setErr('Não deu para gravar neste aparelho.');
-      return;
-    }
     const rec = {
-      media,
-      stream,
-      chunks,
+      media: null,
+      stream: null,
+      chunks: [],
       timer: null,
-      mime: media.mimeType || mime,
-      speech,
-      captionBefore: speech ? speech.baseText : textRef.current,
+      mime: '',
+      speech: null,
+      captionBefore: textRef.current.trim(),
+      spoken: textRef.current.trim(),
+      heard: false,
+      speechBlocked: false,
+      stopping: false,
+      discard: false,
     };
     recRef.current = rec;
     clearAudio();
-    media.ondataavailable = (e) => {
-      if (e.data && e.data.size) chunks.push(e.data);
-    };
-    media.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop());
-      if (rec.timer) clearInterval(rec.timer);
-      try { if (rec.speech) rec.speech.stop(); } catch {}
-      setRecording(false);
-      setRecSec(0);
-      if (recRef.current === rec) recRef.current = null;
-      if (rec.discard) return;
-      const before = rec.speech ? rec.speech.baseText : rec.captionBefore;
-      keepRecording(new Blob(chunks, { type: rec.mime || 'audio/webm' }), rec.mime, before);
-    };
-    media.start(250);
+    if (!startVoiceCaption(rec)) {
+      recRef.current = null;
+      setErr('Não foi possível iniciar a transcrição.');
+      return;
+    }
     setRecording(true);
     setRecSec(0);
     rec.timer = setInterval(() => {
@@ -391,6 +379,53 @@ export function ActionCreate() {
         return n + 1;
       });
     }, 1000);
+    if (rec.started) {
+      try { await rec.started; } catch {}
+    }
+    if (rec.stopping || rec.discard || recRef.current !== rec) return;
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return;
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      return;
+    }
+    if (rec.stopping || rec.discard || recRef.current !== rec) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    rec.stream = stream;
+    const mime = pickRecorderMime();
+    let media;
+    try {
+      media = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+    } catch {
+      stream.getTracks().forEach((t) => t.stop());
+      rec.stream = null;
+      return;
+    }
+    rec.media = media;
+    rec.mime = media.mimeType || mime;
+    media.ondataavailable = (e) => {
+      if (e.data && e.data.size) rec.chunks.push(e.data);
+    };
+    media.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      if (rec.timer) {
+        clearInterval(rec.timer);
+        rec.timer = null;
+      }
+      try { if (rec.speech) rec.speech.stop(); } catch {}
+      setRecording(false);
+      setRecSec(0);
+      if (recRef.current === rec) recRef.current = null;
+      if (rec.discard) return;
+      keepRecording(new Blob(rec.chunks, { type: rec.mime || 'audio/webm' }), rec.mime);
+      finishSession(rec);
+    };
+    media.start(250);
   }
 
   async function submit(e) {
@@ -464,7 +499,7 @@ export function ActionCreate() {
             </div>
             <div className="field">
               <label>O que aconteceu</label>
-              <div className={'acao-caption' + (recording ? ' rec' : '') + (audio && !recording ? ' has-audio' : '') + (transcribing ? ' rec' : '')}>
+              <div className={'acao-caption' + (recording ? ' rec' : '') + (audio && !recording ? ' has-audio' : '')}>
                 <textarea
                   value={text}
                   onChange={(e) => setText(e.target.value)}
@@ -473,10 +508,7 @@ export function ActionCreate() {
                   required
                 />
                 {recording && (
-                  <div className="acao-caption-rec">Gravando {recSec}s de {AUDIO_MAX_SEC}s</div>
-                )}
-                {transcribing && !recording && (
-                  <div className="acao-caption-rec">Passando o áudio para o texto...</div>
+                  <div className="acao-caption-rec">Ouvindo {recSec}s de {AUDIO_MAX_SEC}s · toque para parar</div>
                 )}
                 {audio && !recording && (
                   <div className="acao-caption-audio">
@@ -491,12 +523,14 @@ export function ActionCreate() {
                   className={'acao-mic' + (recording ? ' rec' : '')}
                   onClick={toggleRecord}
                   disabled={busy}
+                  aria-pressed={recording}
+                  title={recording ? 'Parar gravação' : 'Gravar áudio'}
                   aria-label={recording ? 'Parar gravação' : 'Gravar áudio'}
                 >
-                  <Ico name="mic" size={18} />
+                  {recording ? <span className="acao-stop-icon" /> : <Ico name="mic" size={18} />}
                 </button>
               </div>
-              <p className="hint">Toque no microfone para gravar. O texto entra na caixa. Sem preço e sem contato.</p>
+              <p className="hint">Toque no microfone para gravar e no quadrado para parar. O texto entra na caixa. Sem preço e sem contato.</p>
             </div>
             <div className="field">
               <label>Fotos</label>

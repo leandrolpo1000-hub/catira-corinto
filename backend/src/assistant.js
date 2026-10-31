@@ -303,9 +303,8 @@ async function improveText({ title, description, listingType, categoryName }) {
   };
 }
 
-async function transcribeAudio(filePath, originalName, mimeType) {
-  if (!assistantReady() || !filePath || !fs.existsSync(filePath)) return '';
-  if (typeof Blob === 'undefined' || typeof FormData === 'undefined') return '';
+async function transcribeWithCloud(filePath, originalName, mimeType) {
+  if (!assistantReady() || typeof Blob === 'undefined' || typeof FormData === 'undefined') return '';
   const s = getAssistantSettings();
   let buf;
   try {
@@ -335,6 +334,18 @@ async function transcribeAudio(filePath, originalName, mimeType) {
     return '';
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function transcribeAudio(filePath, originalName, mimeType) {
+  if (!filePath || !fs.existsSync(filePath)) return '';
+  const cloud = await transcribeWithCloud(filePath, originalName, mimeType);
+  if (cloud) return cloud;
+  try {
+    const { transcribeLocal } = require('./transcribeLocal');
+    return await transcribeLocal(filePath);
+  } catch {
+    return '';
   }
 }
 

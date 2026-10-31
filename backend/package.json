@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node src/server.js",
-    "test": "node src/action.test.js && node src/lance.test.js && node src/categories.test.js && node src/trades.test.js"
+    "test": "node src/action.test.js && node src/lance.test.js && node src/categories.test.js && node src/trades.test.js && node src/transcribeLocal.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
