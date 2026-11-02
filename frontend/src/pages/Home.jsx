@@ -145,10 +145,10 @@ export default function Home() {
   useEffect(() => {
     const extra = cityQuery() ? '&' + cityQuery() : '';
     api('/api/categories').then(setCats).catch(() => {});
-    api('/api/listings?limit=8&boost=0' + extra).then((d) => setRecent(d.items || [])).catch(() => {});
-    api('/api/listings?section=destaque&limit=6' + extra).then((d) => setFeatured(d.items || [])).catch(() => {});
-    api('/api/listings?trade=true&limit=6' + extra).then((d) => setTrades(d.items || [])).catch(() => {});
-    api('/api/listings?type=procuro&limit=6' + extra).then((d) => setWants(d.items || [])).catch(() => {});
+    api('/api/listings?home=1&limit=8&boost=0' + extra).then((d) => setRecent(d.items || [])).catch(() => {});
+    api('/api/listings?home=1&section=destaque&limit=6' + extra).then((d) => setFeatured(d.items || [])).catch(() => {});
+    api('/api/listings?home=1&trade=true&limit=6' + extra).then((d) => setTrades(d.items || [])).catch(() => {});
+    api('/api/listings?home=1&type=procuro&limit=6' + extra).then((d) => setWants(d.items || [])).catch(() => {});
     api('/api/ranking?limit=5').then((d) => setRanking(d.items || [])).catch(() => {});
   }, [city]);
 

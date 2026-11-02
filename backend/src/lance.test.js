@@ -22,6 +22,13 @@ async function run() {
   const pedro = user('pedro@email.com');
   assert.ok(admin && joao && maria && pedro, 'usuários demo');
 
+  // Fixture idempotente: o credenciamento do catireiro sobrevive ao banco,
+  // então limpamos antes para revalidar o bloqueio de não-catireiro.
+  [maria, pedro].forEach((u) => {
+    db.findWhere('dealerProfiles', (p) => p.userId === u.id).forEach((p) => db.remove('dealerProfiles', p.id));
+    db.findWhere('dealerApplications', (a) => a.userId === u.id).forEach((a) => db.remove('dealerApplications', a.id));
+  });
+
   const cat = db.findOne('categories', () => true);
   const now = new Date().toISOString();
   const listing = db.insert('listings', {

@@ -42,9 +42,18 @@ function sendErr(res, e) {
 router.get('/', authOptional, (req, res) => {
   res.json(action.listPublished({
     userId: req.query.userId,
+    viewerId: req.user && req.user.id,
     page: req.query.page,
     limit: req.query.limit,
   }));
+});
+
+router.get('/notices', authRequired, (req, res) => {
+  res.json(action.listNotifications(req.user));
+});
+
+router.post('/notices/read', authRequired, (req, res) => {
+  res.json(action.markNotificationsRead(req.user));
 });
 
 router.get('/eligible', authRequired, (req, res) => {
@@ -101,6 +110,48 @@ router.post('/:id/report', authRequired, (req, res) => {
     const b = req.body || {};
     const report = action.reportPost(req.user, req.params.id, b.reason, b.description);
     res.status(201).json(report);
+  } catch (e) {
+    sendErr(res, e);
+  }
+});
+
+router.post('/:id/like', authRequired, (req, res) => {
+  try {
+    res.json(action.toggleLike(req.user, req.params.id));
+  } catch (e) {
+    sendErr(res, e);
+  }
+});
+
+router.get('/:id/comments', authOptional, (req, res) => {
+  try {
+    res.json({ items: action.listComments(req.params.id, req.user && req.user.id) });
+  } catch (e) {
+    sendErr(res, e);
+  }
+});
+
+router.post('/:id/comments', authRequired, (req, res) => {
+  try {
+    const b = req.body || {};
+    const comment = action.addComment(req.user, req.params.id, b.text, b.parentId);
+    res.status(201).json(comment);
+  } catch (e) {
+    sendErr(res, e);
+  }
+});
+
+router.post('/:id/comments/:commentId/like', authRequired, (req, res) => {
+  try {
+    res.json(action.toggleCommentLike(req.user, req.params.id, req.params.commentId));
+  } catch (e) {
+    sendErr(res, e);
+  }
+});
+
+router.delete('/:id/comments/:commentId', authRequired, (req, res) => {
+  try {
+    res.json(action.deleteComment(req.user, req.params.id, req.params.commentId));
   } catch (e) {
     sendErr(res, e);
   }

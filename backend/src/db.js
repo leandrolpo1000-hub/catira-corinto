@@ -47,6 +47,21 @@ const EMPTY = {
   opportunityEvents: [],
   actionPosts: [],
   actionPostImages: [],
+  actionPostLikes: [],
+  actionPostComments: [],
+  actionCommentLikes: [],
+  actionNotifications: [],
+  listingLikes: [],
+  listingComments: [],
+  listingCommentLikes: [],
+  listingNotifications: [],
+  messageReactions: [],
+  messageStars: [],
+  officialProducts: [],
+  officialProductOffers: [],
+  officialAdminLogs: [],
+  meliAuth: [],
+  meliOauthStates: [],
 };
 
 function ensureDir() {

@@ -11,6 +11,7 @@ const { LISTING_DAYS } = require('../seed');
 const { resolveCategory } = require('../categories');
 const { getSettings, listingFee, vipListingFee, commonChargingEnabled, vipChargingEnabled, premiumChargingEnabled, parsePremiumDays, quotePremium, premiumUntilIso, takenPremiumDays, premiumDayFee, brazilToday, weekdayOf, premiumRateForDate } = require('../pix');
 const QRCode = require('qrcode');
+const listingSocial = require('../listingSocial');
 
 function publicPayment(p) {
   if (!p) return null;
@@ -54,6 +55,19 @@ const storage = multer.diskStorage({
 const MIN_PHOTOS = 3;
 const MAX_PHOTOS = 8;
 
+// Produto oficial é administrado pela plataforma: nenhuma rota de usuário
+// pode editar, turbinar, cobrar, avaliar ou encerrar o anúncio materializado.
+function isOfficialListing(l) {
+  return require('../official').isOfficialListing(l);
+}
+
+function blockOfficial(l, message) {
+  if (!isOfficialListing(l)) return false;
+  const err = new Error(message || 'Este produto é administrado pela CATIRA OFICIAL.');
+  err.status = 403;
+  throw err;
+}
+
 function parsePrice(raw) {
   if (raw === undefined || raw === null || raw === '') return NaN;
   const str = String(raw).trim();
@@ -74,17 +88,42 @@ const upload = multer({
   },
 });
 
+function searchText(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function matchesSearch(haystack, terms) {
+  if (!terms.length) return false;
+  return terms.every((t) => haystack.includes(t));
+}
+
 function applyFilters(list, q) {
+  const official = require('../official');
   let out = list.slice();
-  const search = (q.q || q.search || '').trim().toLowerCase();
-  if (search) {
+  const search = searchText(q.q || q.search);
+  const terms = search ? search.split(' ').filter(Boolean) : [];
+  let relevance = null;
+  if (terms.length) {
+    relevance = new Map();
     out = out.filter((l) => {
       const cat = db.findById('categories', l.categoryId);
-      const hay = [l.title, l.description, l.subcategory, cat && cat.name, l.city]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return hay.includes(search);
+      const productHay = searchText([l.title, l.description, l.subcategory, cat && cat.name, l.city].filter(Boolean).join(' '));
+      if (matchesSearch(productHay, terms)) {
+        relevance.set(l.id, 3);
+        return true;
+      }
+      const seller = db.findById('users', l.userId);
+      const sellerHay = searchText([seller && seller.name, seller && seller.city].filter(Boolean).join(' '));
+      if (matchesSearch(sellerHay, terms)) {
+        relevance.set(l.id, 1);
+        return true;
+      }
+      return false;
     });
   }
   if (q.category) {
@@ -93,11 +132,16 @@ function applyFilters(list, q) {
   }
   if (q.city) {
     const city = String(q.city).toLowerCase();
-    out = out.filter(
-      (l) =>
+    out = out.filter((l) => {
+      if (official.isOfficialListing(l)) {
+        const product = official.officialOfListing(l);
+        return !!product && official.matchesCity(product, q.city);
+      }
+      return (
         (l.cityId && l.cityId === q.city) ||
         (l.city && l.city.toLowerCase().includes(city))
-    );
+      );
+    });
   }
   const minP = parsePrice(q.minPrice);
   const maxP = parsePrice(q.maxPrice);
@@ -123,18 +167,47 @@ function applyFilters(list, q) {
   }
   if (sort === 'recent' && q.boost !== '0') {
     const liveFeatured = (l) => !!(l.featured && (!l.featuredUntil || new Date(l.featuredUntil).getTime() > Date.now())) || !!l.vip || !!l.premium;
+    // Ordenação aprovada: relevância → anúncios convencionais → oficiais → data.
+    // Produto oficial tem prioridade secundária e nunca prioridade paga.
     out.sort((a, b) => {
+      if (relevance) {
+        const ar = relevance.get(a.id) || 0;
+        const br = relevance.get(b.id) || 0;
+        if (br !== ar) return br - ar;
+      }
+      const ao = official.isOfficialListing(a) ? 1 : 0;
+      const bo = official.isOfficialListing(b) ? 1 : 0;
+      if (ao !== bo) return ao - bo;
       const af = liveFeatured(a) ? 1 : 0;
       const bf = liveFeatured(b) ? 1 : 0;
       if (bf !== af) return bf - af;
       return new Date(b.publishedAt || b.createdAt) - new Date(a.publishedAt || a.createdAt);
+    });
+  } else if (relevance && (sort === 'recent' || !sort)) {
+    out.sort((a, b) => {
+      const ar = relevance.get(a.id) || 0;
+      const br = relevance.get(b.id) || 0;
+      if (br !== ar) return br - ar;
+      const ao = official.isOfficialListing(a) ? 1 : 0;
+      const bo = official.isOfficialListing(b) ? 1 : 0;
+      return ao - bo;
     });
   }
   return out;
 }
 
 router.get('/', authOptional, (req, res) => {
+  const official = require('../official');
+  // Seções editoriais da Home não são pesquisa: produtos oficiais ficam fora
+  // delas e entram apenas por pesquisa ou navegação intencional em
+  // categoria/cidade. O catálogo completo (/buscar) continua incluindo-os.
+  const editorial =
+    req.query.home === '1' ||
+    !!req.query.section ||
+    req.query.trade === 'true' ||
+    req.query.type === 'procuro';
   let list = db.findWhere('listings', (l) => l.status === 'published');
+  if (editorial) list = list.filter((l) => !official.isOfficialListing(l));
   if (req.query.trade === 'true' || req.query.section === 'catiras') {
     list = list.filter((l) => listingTypeOf(l) === 'troca' || listingTypeOf(l) === 'venda_troca' || l.acceptsTrade);
   }
@@ -155,8 +228,37 @@ router.get('/', authOptional, (req, res) => {
     page,
     limit,
     items: slice.map((l) => serializeListing(l, { favorited: isFavorited(uid, l.id), user: req.user, userId: uid })),
+    sellers: page === 1 ? findSellers(req.query) : [],
   });
 });
+
+// Anunciantes que casam com o termo buscado. A busca principal prioriza
+// anúncios (produtos); esta lista aparece depois, como sugestão de pessoas.
+function findSellers(q) {
+  const official = require('../official');
+  const search = searchText(q.q || q.search);
+  if (search.length < 2) return [];
+  const terms = search.split(' ').filter(Boolean);
+  const published = db.findWhere('listings', (l) => l.status === 'published' && !official.isOfficialListing(l));
+  const counts = new Map();
+  published.forEach((l) => counts.set(l.userId, (counts.get(l.userId) || 0) + 1));
+  return db
+    .findWhere('users', (u) => {
+      if (official.isPlatformUser(u)) return false;
+      if (!counts.has(u.id)) return false;
+      const hay = searchText([u.name, u.city, u.storeName].filter(Boolean).join(' '));
+      return matchesSearch(hay, terms);
+    })
+    .map((u) => ({
+      id: u.id,
+      name: u.name,
+      city: u.city || '',
+      avatarColor: u.avatarColor,
+      listingsCount: counts.get(u.id) || 0,
+    }))
+    .sort((a, b) => b.listingsCount - a.listingsCount)
+    .slice(0, 8);
+}
 
 router.get('/premium-days', authOptional, (req, res) => {
   const from = brazilToday();
@@ -295,6 +397,56 @@ router.post('/assistant/improve', authRequired, async (req, res) => {
   }
 });
 
+router.get('/notices', authRequired, (req, res) => {
+  res.json(listingSocial.listNotifications(req.user));
+});
+
+router.post('/notices/read', authRequired, (req, res) => {
+  res.json(listingSocial.markNotificationsRead(req.user));
+});
+
+router.post('/:id/like', authRequired, (req, res) => {
+  try {
+    res.json(listingSocial.toggleLike(req.user, req.params.id));
+  } catch (e) {
+    res.status(e.status || 400).json({ error: e.message || 'Algo deu errado.' });
+  }
+});
+
+router.get('/:id/comments', authOptional, (req, res) => {
+  try {
+    res.json({ items: listingSocial.listComments(req.params.id, req.user && req.user.id) });
+  } catch (e) {
+    res.status(e.status || 400).json({ error: e.message || 'Algo deu errado.' });
+  }
+});
+
+router.post('/:id/comments', authRequired, (req, res) => {
+  try {
+    const b = req.body || {};
+    const comment = listingSocial.addComment(req.user, req.params.id, b.text, b.parentId);
+    res.status(201).json(comment);
+  } catch (e) {
+    res.status(e.status || 400).json({ error: e.message || 'Algo deu errado.' });
+  }
+});
+
+router.post('/:id/comments/:commentId/like', authRequired, (req, res) => {
+  try {
+    res.json(listingSocial.toggleCommentLike(req.user, req.params.id, req.params.commentId));
+  } catch (e) {
+    res.status(e.status || 400).json({ error: e.message || 'Algo deu errado.' });
+  }
+});
+
+router.delete('/:id/comments/:commentId', authRequired, (req, res) => {
+  try {
+    res.json(listingSocial.deleteComment(req.user, req.params.id, req.params.commentId));
+  } catch (e) {
+    res.status(e.status || 400).json({ error: e.message || 'Algo deu errado.' });
+  }
+});
+
 router.get('/:id', authOptional, (req, res) => {
   expireStalePayments();
   const l = db.findById('listings', req.params.id);
@@ -331,6 +483,9 @@ router.get('/:id/reviews', authOptional, (req, res) => {
 router.post('/:id/reviews', authRequired, (req, res) => {
   const l = db.findById('listings', req.params.id);
   if (!l) return res.status(404).json({ error: 'Anúncio não encontrado.' });
+  if (isOfficialListing(l)) {
+    return res.status(403).json({ error: 'Produtos oficiais não recebem avaliações.' });
+  }
   if (l.status !== 'published' && l.status !== 'sold') {
     return res.status(400).json({ error: 'Este anúncio ainda não pode ser avaliado.' });
   }
@@ -508,6 +663,9 @@ router.post('/', authRequired, emailVerifiedRequired, upload.array('photos', MAX
 router.put('/:id', authRequired, upload.array('photos', MAX_PHOTOS), (req, res) => {
   const l = db.findById('listings', req.params.id);
   if (!l) return res.status(404).json({ error: 'Anúncio não encontrado.' });
+  if (isOfficialListing(l)) {
+    return res.status(403).json({ error: 'Produto oficial é editado pelo painel da CATIRA OFICIAL.' });
+  }
   if (l.userId !== req.user.id && !isAdminRole(req.user.role)) {
     return res.status(403).json({ error: 'Sem permissão.' });
   }
@@ -611,6 +769,9 @@ router.put('/:id', authRequired, upload.array('photos', MAX_PHOTOS), (req, res) 
 router.post('/:id/status', authRequired, (req, res) => {
   const l = db.findById('listings', req.params.id);
   if (!l) return res.status(404).json({ error: 'Anúncio não encontrado.' });
+  if (isOfficialListing(l)) {
+    return res.status(403).json({ error: 'Produto oficial não pode ser encerrado por usuário.' });
+  }
   if (l.userId !== req.user.id && !isAdminRole(req.user.role)) {
     return res.status(403).json({ error: 'Sem permissão.' });
   }
@@ -672,6 +833,9 @@ router.post('/:id/upgrade', authRequired, emailVerifiedRequired, (req, res) => {
   expireStalePayments();
   const l = db.findById('listings', req.params.id);
   if (!l) return res.status(404).json({ error: 'Anúncio não encontrado.' });
+  if (isOfficialListing(l)) {
+    return res.status(403).json({ error: 'Produto oficial não tem prioridade paga.' });
+  }
   if (l.userId !== req.user.id && !isAdminRole(req.user.role)) {
     return res.status(403).json({ error: 'Sem permissão.' });
   }
@@ -763,6 +927,9 @@ router.post('/:id/upgrade', authRequired, emailVerifiedRequired, (req, res) => {
 router.delete('/:id', authRequired, (req, res) => {
   const l = db.findById('listings', req.params.id);
   if (!l) return res.status(404).json({ error: 'Anúncio não encontrado.' });
+  if (isOfficialListing(l)) {
+    return res.status(403).json({ error: 'Produto oficial é removido pelo painel da CATIRA OFICIAL.' });
+  }
   if (l.userId !== req.user.id && !isAdminRole(req.user.role)) {
     return res.status(403).json({ error: 'Sem permissão.' });
   }
@@ -774,6 +941,9 @@ router.get('/:id/payment', authRequired, async (req, res) => {
   expireStalePayments();
   const l = db.findById('listings', req.params.id);
   if (!l) return res.status(404).json({ error: 'Anúncio não encontrado.' });
+  if (isOfficialListing(l)) {
+    return res.status(403).json({ error: 'Produto oficial não passa pelo pagamento de anúncio.' });
+  }
   if (l.userId !== req.user.id && !isAdminRole(req.user.role)) {
     return res.status(403).json({ error: 'Sem permissão.' });
   }
@@ -821,6 +991,9 @@ router.get('/:id/payment', authRequired, async (req, res) => {
 router.post('/:id/promo', authRequired, async (req, res) => {
   const l = db.findById('listings', req.params.id);
   if (!l) return res.status(404).json({ error: 'Anúncio não encontrado.' });
+  if (isOfficialListing(l)) {
+    return res.status(403).json({ error: 'Produto oficial não usa cupom de anúncio.' });
+  }
   if (l.userId !== req.user.id && !isAdminRole(req.user.role)) {
     return res.status(403).json({ error: 'Sem permissão.' });
   }
@@ -918,6 +1091,9 @@ router.post('/:id/pay', authRequired, (req, res) => {
   expireStalePayments();
   const l = db.findById('listings', req.params.id);
   if (!l) return res.status(404).json({ error: 'Anúncio não encontrado.' });
+  if (isOfficialListing(l)) {
+    return res.status(403).json({ error: 'Produto oficial não usa pagamento de anúncio.' });
+  }
   if (l.userId !== req.user.id) return res.status(403).json({ error: 'Sem permissão.' });
   const payment = listingPayment(l.id);
   if (!payment) return res.status(404).json({ error: 'Pagamento não encontrado.' });

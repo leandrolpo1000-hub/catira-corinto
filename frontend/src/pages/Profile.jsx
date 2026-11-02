@@ -90,12 +90,33 @@ export default function Profile() {
   const [edit, setEdit] = useState(false);
   const [form, setForm] = useState({ name: '', phone: '', city: '' });
   const [stats, setStats] = useState(null);
+  const [notices, setNotices] = useState([]);
 
   useEffect(() => {
     if (!user) return;
     setForm({ name: user.name, phone: user.phone, city: user.city });
     api('/api/users/' + user.id).then(setStats).catch(() => {});
-  }, [user]);
+    const reqs = [
+      api('/api/listings/notices').then((d) => (d.items || []).map((n) => ({ ...n, href: '/buscar', kind: 'anúncio' }))),
+      api('/api/acao/notices').then((d) => (d.items || []).map((n) => ({ ...n, href: '/em-acao', kind: 'Em Ação' }))),
+    ];
+    if (auctionEnabled) {
+      reqs.push(api('/api/auctions/notifications').then((d) => (d.items || []).map((n) => ({
+        ...n,
+        href: n.auctionId ? '/leilao/' + n.auctionId : '/leiloes',
+        kind: 'leilão',
+        text: n.text || n.title,
+        timeAgo: n.timeAgo,
+      }))));
+    }
+    Promise.all(reqs.map((p) => p.catch(() => []))).then((parts) => {
+      const all = parts.flat().sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+      setNotices(all);
+    });
+    api('/api/listings/notices/read', { method: 'POST' }).catch(() => {});
+    api('/api/acao/notices/read', { method: 'POST' }).catch(() => {});
+    if (auctionEnabled) api('/api/auctions/notifications/read', { method: 'POST' }).catch(() => {});
+  }, [user, auctionEnabled]);
 
   if (!user) return <NeedAuth next="/perfil" />;
 
@@ -145,6 +166,19 @@ export default function Profile() {
           </form>
         )}
         {auctionEnabled && isAdminRole(user.role) && <AdminAuctionSchedule />}
+        <div className="profile-notices">
+          <h2>Notificações</h2>
+          {!notices.length && <p className="hint">Quando alguém curtir, comentar ou avisar, aparece aqui.</p>}
+          {notices.map((n) => (
+            <Link key={n.kind + n.id} to={n.href} className={'list-item acao-notice' + (n.read ? '' : ' unread')}>
+              <span className="avatar sm" style={{ background: n.actor && n.actor.avatarColor }}>{((n.actor && n.actor.name) || '?').slice(0, 1)}</span>
+              <div>
+                <strong>{n.text}</strong>
+                <p className="hint">{n.kind}{n.timeAgo ? ' · ' + n.timeAgo : ''}</p>
+              </div>
+            </Link>
+          ))}
+        </div>
         <div className="menu">
           <button onClick={() => setEdit(!edit)}>Editar perfil</button>
           <Link to="/meus-anuncios">Meus anúncios</Link>
@@ -158,7 +192,7 @@ export default function Profile() {
           {auctionEnabled && <Link to="/leiloes">CATIRA LEILÃO</Link>}
           {auctionEnabled && <Link to="/meus-leiloes">Meus leilões</Link>}
           {auctionEnabled && <Link to="/meus-arremates">Meus arremates</Link>}
-          {auctionEnabled && <Link to="/avisos-leilao">Avisos de leilão</Link>}
+
           {user.dealerStatus === 'approved' || isAdminRole(user.role) ? (
             <Link to="/central-repasse">Central de Repasse</Link>
           ) : (

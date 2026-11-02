@@ -1,7 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Layout } from './components';
 import Home from './pages/Home';
-import Search from './pages/Search';
+import Search, { SearchNotices } from './pages/Search';
 import Catiras from './pages/Catiras';
 import Listing from './pages/Listing';
 import { Login, Register, Forgot, VerifyEmail } from './pages/Auth';
@@ -17,7 +17,7 @@ import Ranking from './pages/Ranking';
 import LanceHub, { LanceDetail, DealerApply, SellerLance } from './pages/LanceHub';
 import OwnResale from './pages/OwnResale';
 import Auctions, { CreateAuction, AuctionDetail, MyAuctions, Watching, MyWins, AuctionPay, AuctionRanking, AuctionNotices } from './pages/Auction';
-import ActionFeed, { ActionCreate } from './pages/Action';
+import ActionFeed, { ActionCreate, ActionNotices } from './pages/Action';
 
 export default function App() {
   return (
@@ -25,6 +25,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/buscar" element={<Search />} />
+        <Route path="/buscar/avisos" element={<SearchNotices />} />
         <Route path="/catiras" element={<Catiras />} />
         <Route path="/anuncio/:id" element={<Listing />} />
         <Route path="/entrar" element={<Login />} />
@@ -48,6 +49,7 @@ export default function App() {
         <Route path="/ranking" element={<Ranking />} />
         <Route path="/em-acao" element={<ActionFeed />} />
         <Route path="/em-acao/publicar" element={<ActionCreate />} />
+        <Route path="/em-acao/avisos" element={<ActionNotices />} />
         <Route path="/leiloes" element={<Auctions />} />
         <Route path="/criar-leilao" element={<CreateAuction />} />
         <Route path="/leilao/:id" element={<AuctionDetail />} />

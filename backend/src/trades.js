@@ -59,6 +59,10 @@ function createTrade(user, body) {
   if (!listing || listing.status !== 'published') {
     throw httpError(404, 'Anúncio não encontrado.');
   }
+  // Produto oficial não participa de trocas: venda é concluída no parceiro.
+  if (require('./official').isOfficialListing(listing)) {
+    throw httpError(403, 'Produto oficial não aceita propostas de troca.');
+  }
   if (!listing.acceptsTrade) {
     throw httpError(400, 'Este anúncio não aceita troca.');
   }
