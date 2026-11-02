@@ -9,6 +9,12 @@ function user(email) {
 function cleanup(ids) {
   (ids.posts || []).forEach((id) => {
     db.findWhere('actionPostImages', (i) => i.postId === id).forEach((i) => db.remove('actionPostImages', i.id));
+    db.findWhere('actionPostLikes', (i) => i.postId === id).forEach((i) => db.remove('actionPostLikes', i.id));
+    db.findWhere('actionPostComments', (i) => i.postId === id).forEach((i) => {
+      db.findWhere('actionCommentLikes', (l) => l.commentId === i.id).forEach((l) => db.remove('actionCommentLikes', l.id));
+      db.remove('actionPostComments', i.id);
+    });
+    db.findWhere('actionNotifications', (i) => i.postId === id).forEach((i) => db.remove('actionNotifications', i.id));
     db.remove('actionPosts', id);
   });
   (ids.listings || []).forEach((id) => db.remove('listings', id));
@@ -154,6 +160,48 @@ async function run() {
     const report = action.reportPost(maria, post.id, 'falso', 'Foto de terceiro');
     ids.reports.push(report.id);
     assert.strictEqual(report.kind, 'action');
+
+    const liked = action.toggleLike(maria, post.id);
+    assert.strictEqual(liked.liked, true);
+    assert.strictEqual(liked.likeCount, 1);
+    const notices = action.listNotifications(joao);
+    assert.ok(notices.items.find((n) => n.type === 'like' && n.postId === post.id));
+    const unliked = action.toggleLike(maria, post.id);
+    assert.strictEqual(unliked.liked, false);
+    assert.strictEqual(unliked.likeCount, 0);
+    action.toggleLike(maria, post.id);
+
+    const comment = action.addComment(maria, post.id, 'Parabéns pela negociação, item top.');
+    assert.ok(comment.id);
+    assert.strictEqual(comment.text.includes('Parabéns'), true);
+    const comments = action.listComments(post.id, maria.id);
+    assert.strictEqual(comments.length, 1);
+    const afterComment = action.listNotifications(joao);
+    assert.ok(afterComment.items.find((n) => n.type === 'comment' && n.postId === post.id));
+
+    const likedComment = action.toggleCommentLike(joao, post.id, comment.id);
+    assert.strictEqual(likedComment.liked, true);
+    assert.strictEqual(likedComment.likeCount, 1);
+    const reply = action.addComment(joao, post.id, 'Valeu, deu certo.', comment.id);
+    assert.strictEqual(reply.parentId, comment.id);
+    assert.strictEqual(action.listComments(post.id).length, 2);
+
+    try {
+      action.deleteComment(maria, post.id, comment.id);
+    } catch (e) {
+      assert.fail('autor do comentário pode excluir o próprio');
+    }
+    const againComment = action.addComment(maria, post.id, 'Ficou para trás, mas deu certo.');
+    const removedByOwner = action.deleteComment(joao, post.id, againComment.id);
+    assert.strictEqual(removedByOwner.ok, true);
+    assert.strictEqual(action.listComments(post.id).length, 0);
+
+    try {
+      action.addComment(maria, post.id, 'Me chama no 31988887777');
+      throw new Error('contato no comentário deveria falhar');
+    } catch (e) {
+      assert.strictEqual(e.status, 400);
+    }
 
     const hidden = action.moderatePost(post.id, 'hide');
     assert.strictEqual(hidden.status, 'hidden');

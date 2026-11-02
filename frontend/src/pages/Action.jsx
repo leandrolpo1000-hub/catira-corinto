@@ -1,18 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
-import { Empty, NeedAuth, PhotoGallery, Top } from '../components';
+import { AccountButton, BrandLogo, Empty, NeedAuth, PhotoGallery, Top } from '../components';
 import { useAuth, isAdminRole } from '../auth';
 import { compressImages, revokePreviews } from '../compressImage';
 import { Ico } from '../icons';
+import { CommentsSheet } from '../CommentsSheet';
 
 const AUDIO_MAX_SEC = 60;
-
-function pickRecorderMime() {
-  if (typeof MediaRecorder === 'undefined') return '';
-  const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'];
-  return types.find((t) => MediaRecorder.isTypeSupported(t)) || '';
-}
+const SILENCE_MS = 3000;
 
 function speechEngine() {
   if (typeof window === 'undefined') return null;
@@ -41,28 +37,87 @@ function ActionAudio({ url, transcript, compact }) {
   );
 }
 
-export function ActionPostCard({ post, onReport }) {
+function likesLabel(n) {
+  if (!n) return '';
+  if (n === 1) return '1 curtida';
+  return n + ' curtidas';
+}
+
+export function ActionPostCard({ post, onReport, onChange, user, onOpenComments }) {
   if (!post) return null;
   const author = post.author;
+  const liked = !!post.liked;
+  const [menu, setMenu] = useState(false);
+  const [openCap, setOpenCap] = useState(false);
+  const nav = useNavigate();
+  const longCap = String(post.text || '').length > 110;
+  const shown = openCap || !longCap ? post.text : String(post.text).slice(0, 110).trim();
+
+  async function like() {
+    if (!user) {
+      nav('/entrar?next=/em-acao');
+      return;
+    }
+    try {
+      const next = await api('/api/acao/' + post.id + '/like', { method: 'POST' });
+      onChange && onChange(next);
+    } catch {}
+  }
+
   return (
-    <article className="acao-card">
-      {post.images && post.images.length > 0 && (
-        <PhotoGallery images={post.images} alt="" size="card" />
-      )}
-      <p className="acao-text">{post.text}</p>
-      <ActionAudio url={post.audioUrl} transcript={post.audioTranscript} />
-      <div className="acao-meta">
+    <article className="acao-ig">
+      <header className="acao-ig-head">
         {author ? (
-          <Link to={'/usuario/' + author.id} className="acao-author">
-            <span className="avatar sm" style={{ background: author.avatarColor }}>{(author.name || '?').slice(0, 1)}</span>
-            <span>{author.name}</span>
+          <Link to={'/usuario/' + author.id} className="acao-ig-user">
+            <span className="acao-ig-ring">
+              <span className="avatar sm" style={{ background: author.avatarColor }}>{(author.name || '?').slice(0, 1)}</span>
+            </span>
+            <span>
+              <strong>{author.name}</strong>
+              <em>{author.city || 'Corinto'}</em>
+            </span>
           </Link>
         ) : <span>Anunciante</span>}
-        <span>{post.timeAgo}</span>
-      </div>
-      {onReport && (
-        <button type="button" className="btn btn-ghost acao-report" onClick={() => onReport(post)}>Denunciar</button>
+        {onReport && (
+          <button type="button" className="acao-ig-more" onClick={() => setMenu((v) => !v)} aria-label="Mais opções">
+            <Ico name="more" size={22} />
+          </button>
+        )}
+        {menu && (
+          <div className="acao-ig-menu">
+            <button type="button" onClick={() => { setMenu(false); onReport(post); }}>Denunciar</button>
+          </div>
+        )}
+      </header>
+      {post.images && post.images.length > 0 && (
+        <PhotoGallery images={post.images} alt="" size="feed" onDoubleTap={like} />
       )}
+      <div className="acao-ig-actions">
+        <button type="button" className={'acao-ig-btn' + (liked ? ' on' : '')} onClick={like} aria-label={liked ? 'Descurtir' : 'Curtir'} aria-pressed={liked}>
+          <Ico name="heart" size={26} stroke={1.7} fill={liked ? 'currentColor' : 'none'} />
+        </button>
+        <button type="button" className="acao-ig-btn" onClick={() => onOpenComments && onOpenComments(post)} aria-label="Comentar">
+          <Ico name="chat" size={26} stroke={1.7} />
+        </button>
+      </div>
+      {!!post.likeCount && <p className="acao-ig-likes">{likesLabel(post.likeCount)}</p>}
+      <p className="acao-ig-cap">
+        {author && <Link to={'/usuario/' + author.id}>{author.name}</Link>}
+        {' '}{shown}{longCap && !openCap ? '... ' : ' '}
+        {longCap && !openCap && (
+          <button type="button" className="acao-ig-more-text" onClick={() => setOpenCap(true)}>mais</button>
+        )}
+      </p>
+      {!!post.commentCount && (
+        <button type="button" className="acao-ig-view" onClick={() => onOpenComments && onOpenComments(post)}>
+          Ver {post.commentCount === 1 ? '1 comentário' : 'todos os ' + post.commentCount + ' comentários'}
+        </button>
+      )}
+      <p className="acao-ig-time">{post.timeAgo}</p>
+      <button type="button" className="acao-ig-add" onClick={() => onOpenComments && onOpenComments(post)}>
+        Adicione um comentário...
+      </button>
+      <ActionAudio url={post.audioUrl} transcript={post.audioTranscript} />
     </article>
   );
 }
@@ -78,6 +133,12 @@ export default function ActionFeed() {
   const [desc, setDesc] = useState('');
   const [ok, setOk] = useState('');
   const [err, setErr] = useState('');
+  const [openPost, setOpenPost] = useState(null);
+
+  function patchPost(next) {
+    setItems((prev) => prev.map((p) => (p.id === next.id ? { ...p, ...next } : p)));
+    setOpenPost((cur) => (cur && cur.id === next.id ? { ...cur, ...next } : cur));
+  }
 
   function load(nextPage) {
     setLoading(true);
@@ -112,13 +173,20 @@ export default function ActionFeed() {
 
   return (
     <>
-      <Top title="Em Ação" />
-      <div className="page">
-        <h1>Catira em Ação</h1>
-        <p className="lead">Fotos, relatos e um áudio opcional de quem já negociou no CATIRA. Sem preço, sem chat e sem proposta por aqui.</p>
-        {user && (
-          <Link className="btn btn-primary" to="/em-acao/publicar" style={{ marginBottom: 16 }}>Publicar</Link>
-        )}
+      <header className="acao-ig-top">
+        <Link to="/" className="brand-link" aria-label="CATIRA Corinto">
+          <BrandLogo size="sm" />
+        </Link>
+        <div className="acao-top-right">
+          {user && (
+            <Link to="/em-acao/publicar" className="acao-plus" aria-label="Publicar">
+              <Ico name="plus" size={24} stroke={1.8} />
+            </Link>
+          )}
+          <AccountButton />
+        </div>
+      </header>
+      <div className="acao-page">
         {ok && <div className="okbox">{ok}</div>}
         {err && <div className="error">{err}</div>}
         {!items.length && !loading && (
@@ -126,15 +194,32 @@ export default function ActionFeed() {
         )}
         <div className="acao-feed">
           {items.map((p) => (
-            <ActionPostCard key={p.id} post={p} onReport={user ? setReportFor : null} />
+            <ActionPostCard
+              key={p.id}
+              post={p}
+              user={user}
+              onChange={patchPost}
+              onReport={user ? setReportFor : null}
+              onOpenComments={setOpenPost}
+            />
           ))}
         </div>
         {items.length < total && (
-          <button className="btn btn-ghost" style={{ marginTop: 16 }} disabled={loading} onClick={() => load(page + 1)}>
+          <button className="btn btn-ghost" style={{ margin: 16 }} disabled={loading} onClick={() => load(page + 1)}>
             {loading ? 'Carregando...' : 'Ver mais'}
           </button>
         )}
       </div>
+      {openPost && (
+        <CommentsSheet
+          subject={{ id: openPost.id, author: openPost.author, commentCount: openPost.commentCount }}
+          user={user}
+          base={'/api/acao/' + openPost.id}
+          loginNext="/em-acao"
+          onClose={() => setOpenPost(null)}
+          onChange={patchPost}
+        />
+      )}
       {reportFor && (
         <div className="modal-bg" onClick={() => setReportFor(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -161,6 +246,35 @@ export default function ActionFeed() {
   );
 }
 
+export function ActionNotices() {
+  const { user } = useAuth();
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    if (!user) return;
+    api('/api/acao/notices').then((d) => setItems(d.items || [])).catch(() => {});
+    api('/api/acao/notices/read', { method: 'POST' }).catch(() => {});
+  }, [user]);
+  if (!user) return <NeedAuth next="/em-acao/avisos" />;
+  return (
+    <>
+      <Top back title="Avisos" />
+      <div className="page">
+        <h1>Avisos do Catira em Ação</h1>
+        {!items.length && <Empty title="Nenhum aviso" text="Quando alguém curtir ou comentar sua publicação, aparece aqui." to="/em-acao" cta="Ver o feed" />}
+        {items.map((n) => (
+          <Link key={n.id} to="/em-acao" className={'list-item acao-notice' + (n.read ? '' : ' unread')}>
+            <span className="avatar sm" style={{ background: n.actor && n.actor.avatarColor }}>{((n.actor && n.actor.name) || '?').slice(0, 1)}</span>
+            <div>
+              <strong>{n.text}</strong>
+              <p className="hint">{n.timeAgo}</p>
+            </div>
+          </Link>
+        ))}
+      </div>
+    </>
+  );
+}
+
 export function ActionCreate() {
   const { user } = useAuth();
   const nav = useNavigate();
@@ -171,12 +285,9 @@ export function ActionCreate() {
   const [text, setText] = useState('');
   const [photos, setPhotos] = useState([]);
   const photosRef = useRef([]);
-  const [audio, setAudio] = useState(null);
-  const [audioUrl, setAudioUrl] = useState('');
   const [recording, setRecording] = useState(false);
   const [recSec, setRecSec] = useState(0);
   const recRef = useRef(null);
-  const audioUrlRef = useRef('');
   const textRef = useRef('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -194,21 +305,16 @@ export function ActionCreate() {
     photosRef.current = photos;
   }, [photos]);
   useEffect(() => {
-    audioUrlRef.current = audioUrl;
-  }, [audioUrl]);
-  useEffect(() => {
     textRef.current = text;
   }, [text]);
   useEffect(() => () => {
     revokePreviews(photosRef.current);
-    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
     const rec = recRef.current;
     if (!rec) return;
     rec.discard = true;
     if (rec.timer) clearInterval(rec.timer);
+    if (rec.silenceTimer) clearTimeout(rec.silenceTimer);
     try { if (rec.speech) rec.speech.stop(); } catch {}
-    try { if (rec.media && rec.media.state !== 'inactive') rec.media.stop(); } catch {}
-    if (rec.stream) rec.stream.getTracks().forEach((t) => t.stop());
   }, []);
 
   if (!user) return <NeedAuth next="/em-acao/publicar" />;
@@ -218,29 +324,6 @@ export function ActionCreate() {
     const next = await compressImages(e.target.files, room);
     setPhotos((prev) => prev.concat(next));
     e.target.value = '';
-  }
-
-  function clearAudio() {
-    setAudio(null);
-    setAudioUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return '';
-    });
-  }
-
-  function keepRecording(blob, mime) {
-    if (!blob || blob.size < 200) return;
-    const ext = /mp4/i.test(mime) ? 'm4a' : /ogg/i.test(mime) ? 'ogg' : 'webm';
-    const file = new File([blob], 'acao-audio.' + ext, { type: mime || blob.type || 'audio/webm' });
-    if (file.size > 8 * 1024 * 1024) {
-      setErr('O áudio pode ter no máximo 8 MB. Grave um pouco mais curto.');
-      return;
-    }
-    setAudioUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return URL.createObjectURL(file);
-    });
-    setAudio(file);
   }
 
   function finishSession(rec) {
@@ -253,7 +336,27 @@ export function ActionCreate() {
       setErr('');
       return;
     }
-    if (!live) setErr('Não deu para passar o áudio para o texto. Escreva o que falou.');
+    if (!live) setErr('Não deu para ouvir. Fale de novo ou escreva o que aconteceu.');
+  }
+
+  function clearRecTimers(rec) {
+    if (!rec) return;
+    if (rec.timer) {
+      clearInterval(rec.timer);
+      rec.timer = null;
+    }
+    if (rec.silenceTimer) {
+      clearTimeout(rec.silenceTimer);
+      rec.silenceTimer = null;
+    }
+  }
+
+  function bumpSilence(rec) {
+    if (!rec || rec.stopping || rec.discard) return;
+    if (rec.silenceTimer) clearTimeout(rec.silenceTimer);
+    rec.silenceTimer = setTimeout(() => {
+      if (recRef.current === rec && !rec.stopping) stopRecorder();
+    }, SILENCE_MS);
   }
 
   function stopRecorder() {
@@ -261,18 +364,11 @@ export function ActionCreate() {
     if (!rec || rec.stopping) return;
     rec.stopping = true;
     setRecording(false);
-    if (rec.timer) {
-      clearInterval(rec.timer);
-      rec.timer = null;
-    }
+    setRecSec(0);
+    clearRecTimers(rec);
     if (rec.speech) {
       try { rec.speech.stop(); } catch {}
     }
-    if (rec.media && rec.media.state !== 'inactive') {
-      try { rec.media.stop(); } catch {}
-      return;
-    }
-    if (rec.stream) rec.stream.getTracks().forEach((t) => t.stop());
     if (recRef.current === rec) recRef.current = null;
     finishSession(rec);
   }
@@ -286,48 +382,59 @@ export function ActionCreate() {
     speech.continuous = false;
     speech.maxAlternatives = 3;
     const baseText = rec.captionBefore || '';
-    let finalText = '';
+    let committed = '';
     let lastText = '';
     speech.onresult = (e) => {
       rec.heard = true;
-      let piece = '';
-      for (let i = e.resultIndex; i < e.results.length; i += 1) {
-        piece += e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalText += e.results[i][0].transcript;
+      bumpSilence(rec);
+      const parts = [];
+      let interim = '';
+      for (let i = 0; i < e.results.length; i += 1) {
+        const piece = String(e.results[i][0].transcript || '').replace(/\s+/g, ' ').trim();
+        if (!piece) continue;
+        if (e.results[i].isFinal) parts.push(piece);
+        else interim = piece;
       }
-      lastText = piece.trim();
-      const spoken = (finalText || lastText).trim();
-      rec.spoken = joinCaption(baseText, spoken);
+      lastText = joinCaption(parts.join(' '), interim);
+      rec.spoken = joinCaption(baseText, joinCaption(committed, lastText));
       textRef.current = rec.spoken;
       setText(rec.spoken);
     };
     speech.onerror = (e) => {
       const name = e && e.error;
-      if (name === 'not-allowed' || name === 'service-not-allowed') {
-        rec.speechBlocked = true;
-        setErr('Permita o acesso ao microfone para gravar o áudio.');
+      if (name === 'aborted') return;
+      if (name === 'no-speech') {
+        if (!rec.stopping) stopRecorder();
+        return;
       }
+      rec.speechBlocked = true;
+      rec.stopping = true;
+      clearRecTimers(rec);
+      if (recRef.current === rec) recRef.current = null;
+      setRecording(false);
+      setRecSec(0);
+      setErr(name === 'not-allowed' || name === 'service-not-allowed'
+        ? 'Permita o acesso ao microfone para falar o que aconteceu.'
+        : 'Não consegui ouvir. Tente novamente.');
     };
     speech.onend = () => {
       if (rec.speech !== speech) return;
-      const spoken = (finalText || lastText).trim();
-      if (spoken) rec.spoken = joinCaption(baseText, spoken);
+      if (lastText) committed = joinCaption(committed, lastText);
+      lastText = '';
+      rec.spoken = joinCaption(baseText, committed);
+      textRef.current = rec.spoken;
+      setText(rec.spoken);
       if (rec.discard || rec.stopping || rec.speechBlocked) return;
-      try { speech.start(); } catch {}
+      try {
+        speech.start();
+      } catch {
+        stopRecorder();
+      }
     };
     rec.speech = speech;
-    rec.started = new Promise((resolve) => {
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        resolve();
-      };
-      speech.onstart = finish;
-      setTimeout(finish, 400);
-    });
     try {
       speech.start();
+      bumpSilence(rec);
       return speech;
     } catch {
       rec.speech = null;
@@ -335,7 +442,7 @@ export function ActionCreate() {
     }
   }
 
-  async function toggleRecord() {
+  function toggleRecord() {
     if (recording) {
       stopRecorder();
       return;
@@ -348,11 +455,8 @@ export function ActionCreate() {
     }
     setErr('');
     const rec = {
-      media: null,
-      stream: null,
-      chunks: [],
       timer: null,
-      mime: '',
+      silenceTimer: null,
       speech: null,
       captionBefore: textRef.current.trim(),
       spoken: textRef.current.trim(),
@@ -362,7 +466,6 @@ export function ActionCreate() {
       discard: false,
     };
     recRef.current = rec;
-    clearAudio();
     if (!startVoiceCaption(rec)) {
       recRef.current = null;
       setErr('Não foi possível iniciar a transcrição.');
@@ -379,53 +482,6 @@ export function ActionCreate() {
         return n + 1;
       });
     }, 1000);
-    if (rec.started) {
-      try { await rec.started; } catch {}
-    }
-    if (rec.stopping || rec.discard || recRef.current !== rec) return;
-    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      return;
-    }
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
-      return;
-    }
-    if (rec.stopping || rec.discard || recRef.current !== rec) {
-      stream.getTracks().forEach((t) => t.stop());
-      return;
-    }
-    rec.stream = stream;
-    const mime = pickRecorderMime();
-    let media;
-    try {
-      media = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
-    } catch {
-      stream.getTracks().forEach((t) => t.stop());
-      rec.stream = null;
-      return;
-    }
-    rec.media = media;
-    rec.mime = media.mimeType || mime;
-    media.ondataavailable = (e) => {
-      if (e.data && e.data.size) rec.chunks.push(e.data);
-    };
-    media.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop());
-      if (rec.timer) {
-        clearInterval(rec.timer);
-        rec.timer = null;
-      }
-      try { if (rec.speech) rec.speech.stop(); } catch {}
-      setRecording(false);
-      setRecSec(0);
-      if (recRef.current === rec) recRef.current = null;
-      if (rec.discard) return;
-      keepRecording(new Blob(rec.chunks, { type: rec.mime || 'audio/webm' }), rec.mime);
-      finishSession(rec);
-    };
-    media.start(250);
   }
 
   async function submit(e) {
@@ -449,10 +505,8 @@ export function ActionCreate() {
       fd.append('listingId', listingId);
       fd.append('text', text);
       photos.forEach((p) => fd.append('photos', p.file));
-      if (audio) fd.append('audio', audio);
       await api('/api/acao', { method: 'POST', body: fd });
       revokePreviews(photos);
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
       nav('/em-acao');
     } catch (ex) {
       setErr(ex.message);
@@ -499,7 +553,7 @@ export function ActionCreate() {
             </div>
             <div className="field">
               <label>O que aconteceu</label>
-              <div className={'acao-caption' + (recording ? ' rec' : '') + (audio && !recording ? ' has-audio' : '')}>
+              <div className={'acao-caption' + (recording ? ' rec' : '')}>
                 <textarea
                   value={text}
                   onChange={(e) => setText(e.target.value)}
@@ -507,30 +561,36 @@ export function ActionCreate() {
                   placeholder={recording ? 'Ouvindo...' : 'Negociação feita em Corinto. Item igual ao combinado.'}
                   required
                 />
-                {recording && (
-                  <div className="acao-caption-rec">Ouvindo {recSec}s de {AUDIO_MAX_SEC}s · toque para parar</div>
-                )}
-                {audio && !recording && (
-                  <div className="acao-caption-audio">
-                    <audio controls preload="metadata" src={audioUrl}>Seu navegador não toca este áudio.</audio>
-                    <button type="button" className="acao-audio-clear" onClick={clearAudio} aria-label="Tirar áudio">
-                      <Ico name="close" size={16} />
+                {recording ? (
+                  <div className="acao-caption-rec">
+                    <span>Ouvindo {recSec}s de {AUDIO_MAX_SEC}s</span>
+                    <button
+                      type="button"
+                      className="acao-mic rec"
+                      onClick={toggleRecord}
+                      disabled={busy}
+                      aria-pressed="true"
+                      title="Parar"
+                      aria-label="Parar"
+                    >
+                      <span className="acao-stop-icon" />
                     </button>
                   </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="acao-mic"
+                    onClick={toggleRecord}
+                    disabled={busy}
+                    aria-pressed="false"
+                    title="Falar o que aconteceu"
+                    aria-label="Falar o que aconteceu"
+                  >
+                    <Ico name="mic" size={18} />
+                  </button>
                 )}
-                <button
-                  type="button"
-                  className={'acao-mic' + (recording ? ' rec' : '')}
-                  onClick={toggleRecord}
-                  disabled={busy}
-                  aria-pressed={recording}
-                  title={recording ? 'Parar gravação' : 'Gravar áudio'}
-                  aria-label={recording ? 'Parar gravação' : 'Gravar áudio'}
-                >
-                  {recording ? <span className="acao-stop-icon" /> : <Ico name="mic" size={18} />}
-                </button>
               </div>
-              <p className="hint">Toque no microfone para gravar e no quadrado para parar. O texto entra na caixa. Sem preço e sem contato.</p>
+              <p className="hint">Toque no microfone, fale e toque no quadrado para parar. O texto entra na caixa. Sem preço e sem contato.</p>
             </div>
             <div className="field">
               <label>Fotos</label>

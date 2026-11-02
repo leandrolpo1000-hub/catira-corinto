@@ -940,7 +940,166 @@ function ensureExtras() {
   ensureAuctionDemo();
   ensureSundayDemo();
   ensureActionDemo();
+  ensureChatDemo();
   try { require('./lance').ensureSettings(); } catch {}
+}
+
+// Conversas de exemplo para o chat estilo WhatsApp. Só cria quando ainda
+// não existe nenhuma conversa, para não duplicar em reinícios.
+function ensureChatDemo() {
+  if (db.count('conversations') > 0) return;
+  // require tardio: helpers depende de seed (LISTING_DAYS), então importar
+  // conversationKey no topo do arquivo cairia em dependência circular.
+  const { conversationKey } = require('./helpers');
+  const joao = db.findOne('users', (u) => u.email === 'joao@email.com');
+  const maria = db.findOne('users', (u) => u.email === 'maria@email.com');
+  const pedro = db.findOne('users', (u) => u.email === 'pedro@email.com');
+  const ana = db.findOne('users', (u) => u.email === 'ana@email.com');
+  if (!joao || !maria || !pedro || !ana) return;
+  const published = db.findWhere('listings', (l) => l.status === 'published');
+  const pick = (ownerId, fallbackIdx) => {
+    const mine = published.filter((l) => l.userId === ownerId);
+    return (mine[0] || published[fallbackIdx % published.length] || null);
+  };
+
+  function minutesAgo(n) {
+    return new Date(Date.now() - n * 60000).toISOString();
+  }
+
+  function addChat({ buyer, seller, listing, script, startMin, unreadForBuyer }) {
+    const conv = db.insert('conversations', {
+      key: conversationKey(buyer.id, seller.id, listing ? listing.id : ''),
+      listingId: listing ? listing.id : null,
+      buyerId: buyer.id,
+      sellerId: seller.id,
+      lastMessage: '',
+      lastAt: minutesAgo(startMin),
+      createdAt: minutesAgo(startMin + (script.length - 1) * 4),
+    });
+    let last = null;
+    const created = [];
+    script.forEach((row, idx) => {
+      const fromBuyer = row.who === 'buyer';
+      const sender = fromBuyer ? buyer : seller;
+      const receiver = fromBuyer ? seller : buyer;
+      const createdAt = minutesAgo(startMin + (script.length - 1 - idx) * 4);
+      const replyTarget = row.replyTo === undefined ? null : created[row.replyTo];
+      const msg = db.insert('messages', {
+        conversationId: conv.id,
+        senderId: sender.id,
+        receiverId: receiver.id,
+        listingId: listing ? listing.id : null,
+        text: row.text,
+        replyToId: replyTarget ? replyTarget.id : null,
+        createdAt,
+        read: fromBuyer ? true : !unreadForBuyer,
+        deleted: false,
+        deletedFor: [],
+      });
+      if (row.emoji) {
+        db.insert('messageReactions', {
+          messageId: msg.id,
+          conversationId: conv.id,
+          userId: fromBuyer ? seller.id : buyer.id,
+          emoji: row.emoji,
+          createdAt,
+        });
+      }
+      created.push(msg);
+      last = msg;
+    });
+    db.update('conversations', conv.id, {
+      lastMessage: last ? last.text : '',
+      lastAt: last ? last.createdAt : minutesAgo(startMin),
+    });
+    return conv;
+  }
+
+  const iphone = published.find((l) => /iPhone/i.test(l.title)) || pick(maria.id, 0);
+  const sofa = published.find((l) => /Sofá/i.test(l.title)) || pick(pedro.id, 1);
+  const tv = published.find((l) => /TV/i.test(l.title)) || pick(ana.id, 2);
+  const furadeira = published.find((l) => /Furadeira Bosch/i.test(l.title)) || pick(joao.id, 3);
+  const bike = published.find((l) => /Bicicleta/i.test(l.title)) || pick(pedro.id, 4);
+
+  addChat({
+    buyer: joao,
+    seller: maria,
+    listing: iphone,
+    startMin: 12,
+    unreadForBuyer: true,
+    script: [
+      { who: 'buyer', text: 'Olá, Maria! O iPhone 13 ainda está disponível?' },
+      { who: 'seller', text: 'Oi, João! Está sim 😊', emoji: '👍', replyTo: 0 },
+      { who: 'buyer', text: 'Ele tem 128GB e a bateria está em quantos por cento?' },
+      { who: 'seller', text: 'Vem com caixa e cabo. O carregador eu perdi, mas posso deixar por 2.250.' },
+      { who: 'buyer', text: 'Fechado! Consigo passar aí amanhã de manhã.' },
+      { who: 'seller', text: 'Combinado! Te espero às 9h.' },
+    ],
+  });
+
+  addChat({
+    buyer: pedro,
+    seller: joao,
+    listing: furadeira,
+    startMin: 46,
+    unreadForBuyer: false,
+    script: [
+      { who: 'buyer', text: 'Boa tarde! A furadeira Bosch ainda está de pé?' },
+      { who: 'seller', text: 'Está sim, Pedro.' },
+      { who: 'buyer', text: 'Aceita 320? Pego hoje mesmo.' },
+      { who: 'seller', text: 'Faço por 330 e te entrego no centro.', emoji: '👏', replyTo: 2 },
+      { who: 'buyer', text: 'Pode ser! Que horas você fica no centro?' },
+      { who: 'seller', text: 'Depois das 17h, em frente à praça.' },
+    ],
+  });
+
+  addChat({
+    buyer: ana,
+    seller: pedro,
+    listing: sofa,
+    startMin: 95,
+    unreadForBuyer: true,
+    script: [
+      { who: 'buyer', text: 'Oi, Pedro! O sofá é de 3 lugares mesmo?' },
+      { who: 'seller', text: 'Isso, Ana. Cinza e sem rasgos.' },
+      { who: 'buyer', text: 'Você entrega em Corinto?' },
+      { who: 'seller', text: 'Entrego sim, mas o frete fica em 80.', emoji: '🙏' },
+      { who: 'buyer', text: 'Vou pensar e te aviso hoje.' },
+      { who: 'seller', text: 'Fico no aguardo!' },
+    ],
+  });
+
+  addChat({
+    buyer: maria,
+    seller: ana,
+    listing: tv,
+    startMin: 180,
+    unreadForBuyer: false,
+    script: [
+      { who: 'buyer', text: 'Ana, a TV ainda está disponível?' },
+      { who: 'seller', text: 'Está, Maria. Smart 50 polegadas.' },
+      { who: 'buyer', text: 'A imagem está boa? Tem controle?' },
+      { who: 'seller', text: 'Imagem perfeita e com controle. 🎮' },
+      { who: 'buyer', text: 'Faz 1.400?' },
+      { who: 'seller', text: 'Consigo 1.450 e você leva hoje.' },
+    ],
+  });
+
+  addChat({
+    buyer: joao,
+    seller: pedro,
+    listing: bike,
+    startMin: 300,
+    unreadForBuyer: false,
+    script: [
+      { who: 'buyer', text: 'Pedro, a bike aro 29 é sua ainda?' },
+      { who: 'seller', text: 'É sim, João. Freio a disco e 21 marchas.' },
+      { who: 'buyer', text: 'Topo trocar numa TV 50 com volta?' },
+      { who: 'seller', text: 'Me manda fotos dela no chat.' },
+      { who: 'buyer', text: 'Envio agora.' },
+      { who: 'seller', text: 'Fechou, vamos negociar. 🚲' },
+    ],
+  });
 }
 
 module.exports = { seedIfEmpty, ensureExtras, ensureCities, ensureMaster, LISTING_FEE, LISTING_DAYS, CITIES, CITY_NAMES, CATEGORIES };

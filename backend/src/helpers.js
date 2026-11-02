@@ -62,13 +62,31 @@ function listingTypeLabel(type) {
   }[type] || 'Venda';
 }
 
+function listingSocialOf(listingId, viewerId) {
+  const likes = db.findWhere('listingLikes', (x) => x.listingId === listingId);
+  const comments = db.findWhere('listingComments', (c) => c.listingId === listingId);
+  return {
+    likeCount: likes.length,
+    commentCount: comments.length,
+    liked: viewerId ? likes.some((x) => x.userId === viewerId) : false,
+  };
+}
+
 function serializeListing(l, opts = {}) {
+  const official = require('./official');
+  const meta = official.officialMetaOf(l);
+  const isOfficial = !!meta;
   const user = db.findById('users', l.userId);
   const cat = categoryOf(l.categoryId);
   const images = imagesOf(l.id);
-  const rating = listingRating(l.id, opts.userId);
+  const rating = isOfficial
+    ? { ratingAvg: 0, ratingCount: 0, myRating: 0, myComment: '' }
+    : listingRating(l.id, opts.userId);
+  const social = isOfficial
+    ? { likeCount: 0, commentCount: 0, liked: false }
+    : listingSocialOf(l.id, opts.userId);
   const viewer = opts.user || (opts.userId ? db.findById('users', opts.userId) : null);
-  const vip = !!l.vip;
+  const vip = isOfficial ? false : !!l.vip;
   const listingType = listingTypeOf(l);
   const acceptsTrade = listingType === 'troca' || listingType === 'venda_troca' || !!l.acceptsTrade;
   const base = {
@@ -94,23 +112,34 @@ function serializeListing(l, opts = {}) {
     plan: listingPlan(l),
     adminNote: (viewer && (viewer.id === l.userId || isAdminRole(viewer.role))) ? (l.adminNote || '') : '',
     previousStatus: (viewer && (viewer.id === l.userId || isAdminRole(viewer.role))) ? (l.previousStatus || '') : '',
-    featured: !!(l.featured && (!l.featuredUntil || new Date(l.featuredUntil).getTime() > Date.now())) || vip || isPremiumLive(l),
-    featuredUntil: l.featuredUntil || null,
-    premium: isPremiumLive(l),
-    premiumDays: Array.isArray(l.premiumDays) ? l.premiumDays : [],
-    premiumUntil: l.premiumUntil || null,
+    featured: isOfficial ? false : (!!(l.featured && (!l.featuredUntil || new Date(l.featuredUntil).getTime() > Date.now())) || vip || isPremiumLive(l)),
+    featuredUntil: isOfficial ? null : (l.featuredUntil || null),
+    premium: isOfficial ? false : isPremiumLive(l),
+    premiumDays: !isOfficial && Array.isArray(l.premiumDays) ? l.premiumDays : [],
+    premiumUntil: isOfficial ? null : (l.premiumUntil || null),
     vip,
-    quickOfferEnabled: (viewer && (viewer.id === l.userId || isAdminRole(viewer.role))) ? !!l.quickOfferEnabled : undefined,
-    waitForEvaluation: (viewer && (viewer.id === l.userId || isAdminRole(viewer.role))) ? !!l.waitForEvaluation : undefined,
-    contactLocked: false,
+    quickOfferEnabled: isOfficial ? false : ((viewer && (viewer.id === l.userId || isAdminRole(viewer.role))) ? !!l.quickOfferEnabled : undefined),
+    waitForEvaluation: isOfficial ? false : ((viewer && (viewer.id === l.userId || isAdminRole(viewer.role))) ? !!l.waitForEvaluation : undefined),
+    contactLocked: isOfficial,
     views: l.views || 0,
     favoritesCount: db.count('favorites', (f) => f.listingId === l.id),
+    likeCount: social.likeCount,
+    commentCount: social.commentCount,
+    liked: social.liked,
     createdAt: l.createdAt,
     publishedAt: l.publishedAt,
-    expiresAt: l.expiresAt,
+    expiresAt: isOfficial ? null : l.expiresAt,
     timeAgo: timeAgo(l.publishedAt || l.createdAt),
     images,
-    seller: safeUser(user),
+    seller: isOfficial ? null : safeUser(user),
+    origin: isOfficial ? 'official' : 'user',
+    isOfficial,
+    official: meta,
+    officialProductId: meta ? meta.officialProductId : null,
+    sellerLabel: meta ? meta.sellerLabel : null,
+    socialEnabled: isOfficial ? false : true,
+    delivery: meta ? meta.delivery : null,
+    officialOffers: meta ? meta.officialOffers : [],
     ratingAvg: rating.ratingAvg,
     ratingCount: rating.ratingCount,
     myRating: rating.myRating,
@@ -297,6 +326,7 @@ function confirmPaymentRecord(payment, listing, opts = {}) {
 
 function notifyAlerts(listing) {
   if (!listing || listing.status !== 'published') return;
+  if (require('./official').isOfficialListing(listing)) return;
   const alerts = db.all('alerts') || [];
   const hay = [listing.title, listing.description, listing.subcategory].filter(Boolean).join(' ').toLowerCase();
   alerts.forEach((a) => {
@@ -319,6 +349,7 @@ function notifyAlerts(listing) {
 
 function sellerScore(user) {
   if (!user) return { score: 0, published: 0, sold: 0, deals: 0, views: 0, favorites: 0 };
+  if (user.role === 'platform') return { score: 0, published: 0, sold: 0, deals: 0, views: 0, favorites: 0 };
   const listings = db.findWhere('listings', (l) => l.userId === user.id);
   const published = listings.filter((l) => l.status === 'published').length;
   const sold = listings.filter((l) => l.status === 'sold' || l.status === 'traded' || l.status === 'negotiated').length;
@@ -345,7 +376,7 @@ function sellerScore(user) {
 
 function rankedSellers() {
   return db
-    .findWhere('users', (u) => u.status !== 'blocked')
+    .findWhere('users', (u) => u.status !== 'blocked' && u.role !== 'platform' && !u.systemAccount)
     .map((u) => {
       const stats = sellerScore(u);
       return {

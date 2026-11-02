@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, money, statusLabel } from '../api';
 import { useAuth, isAdminRole } from '../auth';
-import { Empty, ListingRow, NeedAuth, ThemeToggle, Top } from '../components';
+import { Empty, ListingRow, NeedAuth, Top } from '../components';
+import { Ico } from '../icons';
 import { useConfig } from '../config';
+import { compressImage } from '../compressImage';
 
 export function Favorites() {
   const { user } = useAuth();
@@ -147,10 +149,40 @@ export function Support() {
   );
 }
 
+function clockOf(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function dayKey(value) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+function dayLabel(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  if (dayKey(d) === dayKey(new Date())) return 'Hoje';
+  if (dayKey(d) === dayKey(new Date(Date.now() - 86400000))) return 'Ontem';
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function listTime(iso) {
+  const d = iso ? new Date(iso) : null;
+  if (!d || Number.isNaN(d.getTime())) return '';
+  return dayKey(d) === dayKey(new Date())
+    ? clockOf(iso)
+    : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+}
+
 export function Conversations() {
   const { user } = useAuth();
   const [items, setItems] = useState([]);
   const [closed, setClosed] = useState(false);
+  const [q, setQ] = useState('');
   const isAdmin = user && isAdminRole(user.role);
 
   async function load(showClosed) {
@@ -160,36 +192,255 @@ export function Conversations() {
   useEffect(() => { if (user) load(closed).catch(() => {}); }, [user, closed]);
 
   if (!user) return <NeedAuth next="/conversas" />;
+
+  const term = q.trim().toLowerCase();
+  const shown = term
+    ? items.filter((c) => [c.other?.name, c.listing?.title, c.lastMessage].some((t) => String(t || '').toLowerCase().includes(term)))
+    : items;
+  const totalUnread = items.reduce((a, c) => a + (c.unread || 0), 0);
+
   return (
     <>
       <Top back title="Conversas" />
-      <div className="page">
+      <div className="page chat-list-page">
+        <div className="chat-search">
+          <Ico name="search" size={16} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Pesquisar conversas" />
+          {!!q && (
+            <button type="button" className="chat-search-clear" onClick={() => setQ('')} aria-label="Limpar pesquisa">
+              <Ico name="close" size={16} />
+            </button>
+          )}
+        </div>
         {isAdmin && (
           <div className="chips">
             <button className={'chip' + (!closed ? ' on' : '')} onClick={() => setClosed(false)}>Ativas</button>
             <button className={'chip' + (closed ? ' on' : '')} onClick={() => setClosed(true)}>Suporte finalizado</button>
           </div>
         )}
-        {!items.length && (
+        {!closed && !!totalUnread && <div className="chat-unread-sum">Você tem {totalUnread} mensagem{totalUnread > 1 ? 's' : ''} não lida{totalUnread > 1 ? 's' : ''}.</div>}
+        {!shown.length && (
           <Empty
-            title={closed ? 'Nenhum atendimento finalizado' : 'Nenhuma conversa'}
-            text={closed ? 'Atendimentos encerrados ficam guardados aqui.' : 'Toque em Tenho interesse em um anúncio.'}
+            title={term ? 'Nada encontrado' : closed ? 'Nenhum atendimento finalizado' : 'Nenhuma conversa'}
+            text={term ? 'Tente outro nome ou anúncio.' : closed ? 'Atendimentos encerrados ficam guardados aqui.' : 'Toque em Tenho interesse em um anúncio.'}
           />
         )}
-        {items.map((c) => (
-          <Link key={c.id} to={'/chat/' + c.id} className="list-item">
-            {c.listing?.images?.[0] && <img src={c.listing.images[0].url} alt="" />}
-            <div>
-              <h3>{c.isSupport ? 'Suporte CATIRA' : c.other?.name}</h3>
-              <div className="meta">{c.isSupport ? 'Atendimento do CATIRA' : c.listing?.title}</div>
-              <div className="hint">{c.lastMessage}</div>
-              {c.status === 'closed' && <span className="status cancelled">Finalizado</span>}
-            </div>
-          </Link>
-        ))}
+        <div className="chat-list">
+          {shown.map((c) => (
+            <Link key={c.id} to={'/chat/' + c.id} className={'chat-list-item' + (c.unread ? ' unread' : '')}>
+              {c.isSupport ? (
+                <span className="avatar chat-list-avatar support">C</span>
+              ) : (
+                <span className="avatar chat-list-avatar" style={{ background: c.other?.avatarColor || 'var(--brand)' }}>
+                  {(c.other?.name || '?').slice(0, 1)}
+                </span>
+              )}
+              <div className="chat-list-body">
+                <div className="chat-list-top">
+                  <strong>{c.isSupport ? 'Suporte CATIRA' : c.other?.name || 'Conversa'}</strong>
+                  <em className={c.unread ? 'on' : ''}>{listTime(c.lastAt)}</em>
+                </div>
+                <div className="chat-list-sub">
+                  <span>{c.lastMessage || (c.listing ? c.listing.title : 'Sem mensagens')}</span>
+                  {!!c.unread && <b className="chat-badge">{c.unread > 99 ? '99+' : c.unread}</b>}
+                </div>
+                <div className="chat-list-meta">
+                  {c.isSupport ? 'Atendimento do CATIRA' : c.listing?.title}
+                  {c.status === 'closed' && <span className="chat-list-closed">Finalizado</span>}
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
       </div>
     </>
   );
+}
+
+const CHAT_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+const EMOJI_PANEL = [
+  '😀', '😁', '😂', '🤣', '😊', '😍', '😘', '😎',
+  '🤔', '😅', '😢', '😭', '😡', '🥳', '😴', '🤝',
+  '👍', '👎', '👏', '🙏', '💪', '✌️', '👋', '🫶',
+  '❤️', '🔥', '⭐', '💰', '🎉', '📦', '🚗', '🏠',
+];
+const REC_MAX_SEC = 120;
+
+function fmtClock(sec) {
+  const total = Math.max(0, Math.round(Number(sec) || 0));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function previewOf(m) {
+  if (!m) return '';
+  if (m.kind === 'image') return '[Foto]' + (m.text ? ' ' + m.text : '');
+  if (m.kind === 'audio') return '[Áudio]' + (m.text ? ' ' + m.text : '');
+  return m.text || '';
+}
+
+function AudioBubble({ url, duration }) {
+  const audioRef = useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [pos, setPos] = useState(0);
+  const [total, setTotal] = useState(Number(duration) || 0);
+
+  function toggle() {
+    const el = audioRef.current;
+    if (!el) return;
+    if (el.paused) el.play().catch(() => {});
+    else el.pause();
+  }
+
+  const pct = total > 0 ? Math.min(100, (pos / total) * 100) : 0;
+  return (
+    <div className="chat-audio" onPointerDown={(e) => e.stopPropagation()}>
+      <audio
+        ref={audioRef}
+        src={url}
+        preload="metadata"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => { setPlaying(false); setPos(0); }}
+        onTimeUpdate={(e) => setPos(e.currentTarget.currentTime || 0)}
+        onLoadedMetadata={(e) => {
+          const d = e.currentTarget.duration;
+          if (Number.isFinite(d) && d > 0 && !duration) setTotal(d);
+        }}
+      />
+      <button type="button" className="chat-audio-play" onClick={toggle} aria-label={playing ? 'Pausar áudio' : 'Tocar áudio'}>
+        <Ico name={playing ? 'pause' : 'play'} size={15} fill="currentColor" />
+      </button>
+      <span className="chat-audio-bar"><i style={{ width: pct + '%' }} /></span>
+      <span className="chat-audio-time">{fmtClock(total > 0 ? Math.max(0, total - pos) : pos)}</span>
+    </div>
+  );
+}
+
+function useChatRecorder(onDone) {
+  const [recording, setRecording] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const [error, setError] = useState('');
+  const ref = useRef(null);
+
+  useEffect(() => () => {
+    const r = ref.current;
+    if (!r) return;
+    r.discard = true;
+    clearInterval(r.timer);
+    try { r.recorder.stop(); } catch {}
+    r.stream.getTracks().forEach((t) => t.stop());
+  }, []);
+
+  async function start() {
+    if (ref.current) return;
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      setError('Seu navegador não grava áudio.');
+      return;
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setError('Não foi possível usar o microfone. Verifique a permissão.');
+      return;
+    }
+    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
+      .find((t) => window.MediaRecorder.isTypeSupported && window.MediaRecorder.isTypeSupported(t)) || '';
+    let recorder;
+    try {
+      recorder = new window.MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    } catch {
+      try { recorder = new window.MediaRecorder(stream); } catch {
+        stream.getTracks().forEach((t) => t.stop());
+        setError('Seu navegador não grava áudio.');
+        return;
+      }
+    }
+    const chunks = [];
+    const ctx = { stream, recorder, chunks, timer: null, startedAt: Date.now(), discard: false };
+    ref.current = ctx;
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    recorder.onstop = () => {
+      clearInterval(ctx.timer);
+      stream.getTracks().forEach((t) => t.stop());
+      if (ref.current === ctx) ref.current = null;
+      const secs = Math.max(1, Math.round((Date.now() - ctx.startedAt) / 1000));
+      setRecording(false);
+      setSeconds(0);
+      if (ctx.discard || !chunks.length) return;
+      const type = recorder.mimeType || mime || 'audio/webm';
+      const ext = type.includes('mp4') ? 'mp4' : type.includes('ogg') ? 'ogg' : 'webm';
+      onDone(new File(chunks, 'audio.' + ext, { type }), secs);
+    };
+    recorder.start();
+    ctx.timer = setInterval(() => {
+      const secs = Math.round((Date.now() - ctx.startedAt) / 1000);
+      setSeconds(secs);
+      if (secs >= REC_MAX_SEC) stop();
+    }, 250);
+    setError('');
+    setSeconds(0);
+    setRecording(true);
+  }
+
+  function stop() {
+    const r = ref.current;
+    if (!r) return;
+    try { r.recorder.stop(); } catch {}
+  }
+
+  function cancel() {
+    const r = ref.current;
+    if (!r) return;
+    r.discard = true;
+    clearInterval(r.timer);
+    try { r.recorder.stop(); } catch {}
+    r.stream.getTracks().forEach((t) => t.stop());
+    ref.current = null;
+    setRecording(false);
+    setSeconds(0);
+  }
+
+  return { recording, seconds, error, start, stop, cancel };
+}
+
+function useKeyboardViewport(pageRef, scrollRef) {
+  useEffect(() => {
+    const vv = window.visualViewport;
+    const el = pageRef.current;
+    if (!el) return undefined;
+    function apply() {
+      const height = vv ? vv.height : window.innerHeight;
+      const top = vv ? vv.offsetTop : 0;
+      el.style.setProperty('--chat-h', Math.round(height) + 'px');
+      el.style.setProperty('--chat-top', Math.round(top) + 'px');
+      const shrunk = top + height < window.innerHeight - 80;
+      if (shrunk) el.dataset.keyboard = 'open';
+      else delete el.dataset.keyboard;
+    }
+    apply();
+    function onResize() {
+      apply();
+      const body = scrollRef.current;
+      if (body) body.scrollTop = body.scrollHeight;
+    }
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    if (vv) {
+      vv.addEventListener('resize', onResize);
+      vv.addEventListener('scroll', apply);
+    }
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+      if (vv) {
+        vv.removeEventListener('resize', onResize);
+        vv.removeEventListener('scroll', apply);
+      }
+    };
+  }, [pageRef, scrollRef]);
 }
 
 export function Chat() {
@@ -198,27 +449,133 @@ export function Chat() {
   const [data, setData] = useState(null);
   const [text, setText] = useState('');
   const [err, setErr] = useState('');
+  const [replyTo, setReplyTo] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [pendingFile, setPendingFile] = useState(null);
+  const [pendingCaption, setPendingCaption] = useState('');
+  const [lightbox, setLightbox] = useState('');
+  const pageRef = useRef(null);
+  const scrollRef = useRef(null);
+  const pressTimer = useRef(null);
+  const fileRef = useRef(null);
+  const cameraRef = useRef(null);
+  const inputRef = useRef(null);
   const nav = useNavigate();
+
+  const recorder = useChatRecorder((file, secs) => uploadFile(file, secs, ''));
+  const hasSent = (data?.messages || []).some((m) => m.mine);
+  useKeyboardViewport(pageRef, scrollRef);
+
+  // O painel de emojis fecha em qualquer ação que não seja escolher um emoji.
+  useEffect(() => {
+    if (!emojiOpen) return undefined;
+    function onPointerDown(e) {
+      if (e.target.closest && e.target.closest('.chat-emoji-panel, .chat-emoji-toggle')) return;
+      setEmojiOpen(false);
+    }
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+  }, [emojiOpen]);
 
   async function load() {
     const d = await api('/api/conversations/' + id);
     setData(d);
   }
   useEffect(() => { if (user) load().catch(() => {}); }, [id, user]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [data]);
+
+  useEffect(() => () => clearTimeout(pressTimer.current), []);
+
+  useEffect(() => {
+    if (!preview) return undefined;
+    return () => URL.revokeObjectURL(preview);
+  }, [preview]);
+
   if (!user) return <NeedAuth next={'/chat/' + id} />;
+
+  async function uploadFile(file, duration, caption) {
+    if (!file) return false;
+    setEmojiOpen(false);
+    setUploading(true);
+    setErr('');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      if (duration) form.append('duration', String(duration));
+      if (caption) form.append('text', caption);
+      if (replyTo?.id) form.append('replyToId', replyTo.id);
+      await api('/api/conversations/' + id + '/messages', { method: 'POST', body: form });
+      setReplyTo(null);
+      await load();
+      return true;
+    } catch (e2) {
+      setErr(e2.message);
+      return false;
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function pickFile(list) {
+    const file = list && list[0];
+    if (!file) return;
+    if (String(file.type || '').startsWith('image/')) {
+      let ready = file;
+      try {
+        ready = await compressImage(file);
+      } catch {
+        ready = file;
+      }
+      setPendingFile(ready);
+      setPreview(URL.createObjectURL(ready));
+      return;
+    }
+    uploadFile(file, 0, '');
+  }
+
+  function closePreview() {
+    setPendingFile(null);
+    setPendingCaption('');
+    setPreview(null);
+  }
+
+  async function sendPreview() {
+    if (!pendingFile) return;
+    const ok = await uploadFile(pendingFile, 0, pendingCaption.trim());
+    if (ok) closePreview();
+  }
 
   async function send(e) {
     e.preventDefault();
-    if (!text.trim()) return;
-    await api('/api/conversations/' + id + '/messages', { method: 'POST', body: JSON.stringify({ text }) });
-    setText('');
-    load();
+    setEmojiOpen(false);
+    const body = text.trim();
+    if (!body) return;
+    try {
+      await api('/api/conversations/' + id + '/messages', {
+        method: 'POST',
+        body: JSON.stringify({ text: body, replyToId: replyTo?.id || undefined }),
+      });
+      setText('');
+      setReplyTo(null);
+      await load();
+    } catch (e2) {
+      setErr(e2.message);
+    }
   }
 
   const conv = data?.conversation;
+  const messages = data?.messages || [];
   const isSupport = !!conv?.isSupport;
   const isAdmin = isAdminRole(user.role);
   const closed = isSupport && conv?.status === 'closed';
+  const otherName = isSupport ? 'Suporte CATIRA' : conv?.other?.name || 'Chat';
 
   async function closeSupport() {
     try {
@@ -229,55 +586,383 @@ export function Chat() {
     }
   }
 
+  async function react(emoji) {
+    if (!selected) return;
+    try {
+      await api('/api/conversations/' + id + '/messages/' + selected.id + '/reaction', {
+        method: 'POST',
+        body: JSON.stringify({ emoji }),
+      });
+      setSelected(null);
+      await load();
+    } catch (e) {
+      setErr(e.message);
+    }
+  }
+
+  async function toggleStar() {
+    if (!selected) return;
+    try {
+      await api('/api/conversations/' + id + '/messages/' + selected.id + '/star', { method: 'POST' });
+      setSelected(null);
+      await load();
+    } catch (e) {
+      setErr(e.message);
+    }
+  }
+
+  async function remove(forAll) {
+    if (!selected) return;
+    try {
+      await api(
+        '/api/conversations/' + id + '/messages/' + selected.id + '?forAll=' + (forAll ? '1' : '0'),
+        { method: 'DELETE' }
+      );
+      setSelected(null);
+      await load();
+    } catch (e) {
+      setErr(e.message);
+    }
+  }
+
+  function pressStart(m) {
+    clearTimeout(pressTimer.current);
+    pressTimer.current = setTimeout(() => {
+      setEmojiOpen(false);
+      setSelected(m);
+    }, 420);
+  }
+
+  function pressEnd() {
+    clearTimeout(pressTimer.current);
+  }
+
+  function startReply(m) {
+    if (m.deleted) return;
+    setEmojiOpen(false);
+    setReplyTo({ id: m.id, senderId: m.senderId, text: m.text });
+    setSelected(null);
+  }
+
   return (
-    <>
-      <header className="topbar">
-        <div className="brand-row">
-          <button onClick={() => nav(-1)} className="back-btn">Voltar</button>
-          <strong>{isSupport ? 'Suporte CATIRA' : conv?.other?.name || 'Chat'}</strong>
-          {isSupport && isAdmin && !closed && (
-            <button type="button" className="support-close-top" onClick={closeSupport}>Encerrar</button>
-          )}
-          <ThemeToggle />
+    <div className="chat-page" ref={pageRef}>
+      <header className="chat-top">
+        <button type="button" className="chat-back" onClick={() => nav(-1)} aria-label="Voltar">
+          <Ico name="back" size={20} />
+        </button>
+        <span
+          className="avatar chat-top-avatar"
+          style={{ background: isSupport ? 'var(--catira)' : conv?.other?.avatarColor || 'var(--brand)' }}
+        >
+          {otherName.slice(0, 1)}
+        </span>
+        <div className="chat-top-body">
+          <strong>{otherName}</strong>
+          <em>{isSupport ? (closed ? 'Atendimento encerrado' : 'Atendimento do CATIRA') : conv?.other?.city || 'No CATIRA'}</em>
         </div>
-        {isSupport ? (
-          <div className="hint">
-            {closed ? 'Atendimento encerrado' : 'Atendimento do CATIRA · respondemos por aqui'}
-          </div>
-        ) : (
-          conv?.listing && <div className="hint">{conv.listing.title} · {money(conv.listing.price)} · {conv.listing.listingTypeLabel || ''}</div>
+        {isSupport && isAdmin && !closed && (
+          <button type="button" className="chat-top-action" onClick={closeSupport}>Encerrar</button>
         )}
       </header>
-      <div className="chat-wrap">
-        <div className="chat-msgs">
-          {(data?.messages || []).map((m) => (
-            <div key={m.id} className={'bubble ' + (m.senderId === user.id ? 'me' : 'them')}>{m.text}</div>
-          ))}
-        </div>
-        {closed ? (
-          <div className="support-closed">
-            {isAdmin
-              ? 'Atendimento encerrado.'
-              : <>Atendimento encerrado. Se precisar, abra um novo em <Link to="/suporte">Falar com o suporte</Link>.</>}
+
+      {conv?.listing && (
+        <Link to={'/anuncio/' + conv.listing.id} className="chat-listing">
+          {conv.listing.images?.[0] && <img src={conv.listing.images[0].url} alt="" />}
+          <div>
+            <strong>{conv.listing.title}</strong>
+            <span>{money(conv.listing.price)}{conv.listing.city ? ' · ' + conv.listing.city + (String(conv.listing.city).includes('/') ? '' : '/MG') : ''}</span>
           </div>
-        ) : (
-          <>
-            {!conv?.isSupport && (
-              <div className="quick-msgs chat-quick">
-                {['Olá! Ainda está disponível?', 'Você aceita troca?', 'Faz por R$ ___?', 'Tenho interesse.'].map((t) => (
-                  <button key={t} type="button" className="chip" onClick={() => setText(t)}>{t}</button>
-                ))}
+        </Link>
+      )}
+
+      <div className="chat-body" ref={scrollRef}>
+        {!messages.length && <div className="chat-empty">Diga olá para começar a conversa.</div>}
+        {messages.map((m, idx) => {
+          const prev = messages[idx - 1];
+          const showDay = !prev || dayKey(prev.createdAt) !== dayKey(m.createdAt);
+          const mine = m.mine;
+          return (
+            <div key={m.id}>
+              {showDay && <div className="chat-day"><span>{dayLabel(m.createdAt)}</span></div>}
+              <div className={'chat-row' + (mine ? ' mine' : '')}>
+                <div
+                  className={'chat-bubble' + (mine ? ' mine' : '') + (m.deleted ? ' deleted' : '') + (m.starred ? ' starred' : '')}
+                  onContextMenu={(e) => { e.preventDefault(); setSelected(m); }}
+                  onPointerDown={() => pressStart(m)}
+                  onPointerUp={pressEnd}
+                  onPointerLeave={pressEnd}
+                  onPointerCancel={pressEnd}
+                >
+                  {m.replyTo && (
+                    <div className="chat-quote">
+                      <strong>{m.replyTo.senderId === user.id ? 'Você' : otherName}</strong>
+                      <span>{previewOf(m.replyTo) || m.replyTo.text}</span>
+                    </div>
+                  )}
+                  {!!m.starred && <span className="chat-star"><Ico name="star" size={13} fill="currentColor" /></span>}
+                  {m.kind === 'image' && m.fileUrl && (
+                    <button
+                      type="button"
+                      className="chat-image-btn"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={() => setLightbox(m.fileUrl)}
+                      aria-label="Ampliar foto"
+                    >
+                      <img className="chat-image" src={m.fileUrl} alt={m.text || 'Foto enviada'} loading="lazy" />
+                    </button>
+                  )}
+                  {m.kind === 'audio' && m.fileUrl && (
+                    <AudioBubble url={m.fileUrl} duration={m.duration} />
+                  )}
+                  {!!m.text && <p>{m.text}</p>}
+                  <div className="chat-meta">
+                    <span>{clockOf(m.createdAt)}</span>
+                    {mine && !m.deleted && (
+                      <span className={'chat-checks' + (m.read ? ' read' : '')} aria-label={m.read ? 'Lida' : 'Enviada'}>
+                        {m.read ? '✓✓' : '✓'}
+                      </span>
+                    )}
+                  </div>
+                  {!!(m.reactions || []).length && (
+                    <div className="chat-reactions">
+                      {Array.from(new Set(m.reactions)).map((emo) => (
+                        <span key={emo}>{emo}<b>{m.reactions.filter((x) => x === emo).length}</b></span>
+                      ))}
+                    </div>
+                  )}
+                  {!m.deleted && (
+                    <button
+                      type="button"
+                      className="chat-react-btn"
+                      aria-label="Reagir"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={() => setSelected(m)}
+                    >
+                      <Ico name="smile" size={13} />
+                    </button>
+                  )}
+                </div>
               </div>
-            )}
-            <form className="chat-input" onSubmit={send}>
-              <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Mensagem" />
-              <button>Enviar</button>
-            </form>
-            {err && <div className="error" style={{ margin: 12 }}>{err}</div>}
-          </>
-        )}
+            </div>
+          );
+        })}
       </div>
-    </>
+
+      {closed ? (
+        <div className="chat-closed">
+          {isAdmin
+            ? 'Atendimento encerrado.'
+            : <>Atendimento encerrado. Se precisar, abra um novo em <Link to="/suporte">Falar com o suporte</Link>.</>}
+        </div>
+      ) : (
+        <div className="chat-compose">
+          {replyTo && (
+            <div className="chat-reply-bar">
+              <div>
+                <strong>{replyTo.senderId === user.id ? 'Você' : otherName}</strong>
+                <span>{previewOf(replyTo) || replyTo.text}</span>
+              </div>
+              <button type="button" onClick={() => setReplyTo(null)} aria-label="Cancelar resposta">
+                <Ico name="close" size={16} />
+              </button>
+            </div>
+          )}
+          {!!data && !conv?.isSupport && !hasSent && !recorder.recording && (
+            <div className="chat-quick">
+              {['Ainda está disponível?', 'Aceita troca?', 'Qual o menor valor?', 'Tenho interesse!'].map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className="chip"
+                  onClick={() => {
+                    setEmojiOpen(false);
+                    setText(t);
+                  }}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          )}
+          {emojiOpen && !recorder.recording && (
+            <div className="chat-emoji-panel">
+              {EMOJI_PANEL.map((emo) => (
+                <button
+                  key={emo}
+                  type="button"
+                  onClick={() => setText((t) => t + emo)}
+                >
+                  {emo}
+                </button>
+              ))}
+            </div>
+          )}
+          {recorder.recording ? (
+            <div className="chat-rec">
+              <button type="button" className="chat-rec-cancel" onClick={recorder.cancel} aria-label="Cancelar gravação">
+                <Ico name="trash" size={18} />
+              </button>
+              <span className="chat-rec-dot" />
+              <span className="chat-rec-time">{fmtClock(recorder.seconds)}</span>
+              <span className="chat-rec-hint">Gravando áudio...</span>
+              <button type="button" className="chat-send chat-send-rec" onClick={recorder.stop} aria-label="Enviar áudio">
+                <Ico name="send" size={18} fill="currentColor" />
+              </button>
+            </div>
+          ) : (
+            <form className="chat-compose-bar" onSubmit={send}>
+              <button
+                type="button"
+                className="chat-icon-btn chat-emoji-toggle"
+                aria-label={emojiOpen ? 'Fechar emojis' : 'Emojis'}
+                aria-expanded={emojiOpen}
+                onClick={() => setEmojiOpen((v) => !v)}
+              >
+                <Ico name="smile" size={21} />
+              </button>
+              <input
+                ref={inputRef}
+                value={text}
+                onChange={(e) => {
+                  setEmojiOpen(false);
+                  setText(e.target.value);
+                }}
+                onFocus={() => setEmojiOpen(false)}
+                placeholder={uploading ? 'Enviando...' : replyTo ? 'Respondendo...' : 'Mensagem'}
+                disabled={uploading}
+              />
+              <button
+                type="button"
+                className="chat-icon-btn"
+                aria-label="Anexar arquivo"
+                onClick={() => {
+                  setEmojiOpen(false);
+                  fileRef.current?.click();
+                }}
+                disabled={uploading}
+              >
+                <Ico name="clip" size={20} />
+              </button>
+              <button
+                type="button"
+                className="chat-icon-btn"
+                aria-label="Tirar foto"
+                onClick={() => {
+                  setEmojiOpen(false);
+                  cameraRef.current?.click();
+                }}
+                disabled={uploading}
+              >
+                <Ico name="camera" size={20} />
+              </button>
+              {text.trim() ? (
+                <button type="submit" className="chat-send" disabled={uploading} aria-label="Enviar">
+                  <Ico name="send" size={20} fill="currentColor" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="chat-send chat-send-mic"
+                  onClick={() => {
+                    setEmojiOpen(false);
+                    recorder.start();
+                  }}
+                  disabled={uploading}
+                  aria-label="Gravar áudio"
+                >
+                  <Ico name="mic" size={20} />
+                </button>
+              )}
+            </form>
+          )}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*,audio/*"
+            hidden
+            onChange={(e) => {
+              pickFile(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <input
+            ref={cameraRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            onChange={(e) => {
+              pickFile(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          {(recorder.error || err) && <div className="error chat-error">{recorder.error || err}</div>}
+        </div>
+      )}
+
+      {lightbox && (
+        <div className="chat-preview-bg" onClick={() => setLightbox('')}>
+          <img className="chat-lightbox-img" src={lightbox} alt="Foto ampliada" />
+        </div>
+      )}
+
+      {preview && (
+        <div className="chat-preview-bg" onClick={closePreview}>
+          <div className="chat-preview" onClick={(e) => e.stopPropagation()}>
+            <img src={preview} alt="Prévia da foto" />
+            <div className="chat-preview-bar">
+              <button type="button" className="chat-icon-btn" onClick={closePreview} aria-label="Cancelar foto">
+                <Ico name="close" size={20} />
+              </button>
+              <input
+                value={pendingCaption}
+                onChange={(e) => setPendingCaption(e.target.value)}
+                placeholder="Legenda (opcional)"
+              />
+              <button
+                type="button"
+                className="chat-send"
+                onClick={sendPreview}
+                disabled={uploading}
+                aria-label="Enviar foto"
+              >
+                <Ico name="send" size={18} fill="currentColor" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selected && (
+        <div className="modal-bg chat-sheet-bg" onClick={() => setSelected(null)}>
+          <div className="chat-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="chat-sheet-bar" />
+            <div className="chat-sheet-emos">
+              {CHAT_EMOJIS.map((emo) => (
+                <button key={emo} type="button" onClick={() => react(emo)}>{emo}</button>
+              ))}
+            </div>
+            <div className="chat-sheet-actions">
+              <button type="button" onClick={() => startReply(selected)}>
+                <Ico name="reply" size={18} /> Responder
+              </button>
+              <button type="button" onClick={toggleStar}>
+                <Ico name="star" size={18} fill={selected.starred ? 'currentColor' : 'none'} />
+                {selected.starred ? 'Remover dos favoritos' : 'Favoritar'}
+              </button>
+              <button type="button" onClick={() => remove(false)}>
+                <Ico name="close" size={18} /> Apagar para mim
+              </button>
+              {selected.senderId === user.id && !selected.deleted && (
+                <button type="button" className="danger" onClick={() => remove(true)}>
+                  <Ico name="close" size={18} /> Apagar para todos
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

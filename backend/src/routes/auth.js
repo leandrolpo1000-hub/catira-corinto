@@ -97,7 +97,8 @@ router.post('/login', (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Informe e-mail e senha.' });
   const user = db.findOne('users', (u) => u.email.toLowerCase() === String(email).toLowerCase());
-  if (!user || !bcrypt.compareSync(String(password), user.passwordHash)) {
+  // Identidade institucional não possui login: é operada só pelo painel.
+  if (!user || require('../official').isPlatformUser(user) || !bcrypt.compareSync(String(password), user.passwordHash)) {
     return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
   }
   if (user.status === 'blocked') {
@@ -160,6 +161,10 @@ router.post('/forgot', (req, res) => {
   const { email } = req.body || {};
   if (!email) return res.status(400).json({ error: 'Informe o e-mail.' });
   const user = db.findOne('users', (u) => u.email.toLowerCase() === String(email).toLowerCase());
+  // Conta institucional não tem login próprio: não gera redefinição.
+  if (user && require('../official').isPlatformUser(user)) {
+    return res.json({ ok: true, message: 'Se o e-mail existir, enviaremos as instruções.' });
+  }
   if (!user) {
     return res.json({ ok: true, message: 'Se o e-mail existir, enviaremos as instruções.' });
   }
@@ -193,7 +198,9 @@ router.post('/reset', (req, res) => {
   );
   if (!rec) return res.status(400).json({ error: 'Código inválido ou expirado.' });
   const user = db.findById('users', rec.userId);
-  if (!user) return res.status(400).json({ error: 'Usuário não encontrado.' });
+  if (!user || require('../official').isPlatformUser(user)) {
+    return res.status(400).json({ error: 'Usuário não encontrado.' });
+  }
   db.update('users', user.id, { passwordHash: bcrypt.hashSync(String(password), 10) });
   db.update('passwordResets', rec.id, { used: true });
   res.json({ ok: true, message: 'Senha redefinida. Faça login.' });

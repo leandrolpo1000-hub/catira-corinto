@@ -1,7 +1,8 @@
 import {
   Home, Search, Plus, Heart, User, Menu, MapPin, Sun, Moon, Mic, X, Sparkles,
-  MessageCircle, Star, Camera, Repeat2, Bell,
-  Gavel, ShoppingBag, Tag,
+  MessageCircle, Star, Camera, Repeat2, Bell, MoreHorizontal, Send,
+  Gavel, ShoppingBag, Tag, LayoutGrid, Rows3,
+  ArrowLeft, Reply, Smile, Paperclip, Play, Pause, Trash2,
   CarFront, Smartphone, House, Shirt, Wrench, Gamepad2, BookOpen,
   Dumbbell, Baby, PawPrint, Sprout, Gem, Building2, Briefcase,
 } from 'lucide-react';
@@ -27,10 +28,21 @@ const UI = {
   mic: Mic,
   close: X,
   bell: Bell,
+  more: MoreHorizontal,
+  send: Send,
+  back: ArrowLeft,
+  reply: Reply,
+  smile: Smile,
+  clip: Paperclip,
+  play: Play,
+  pause: Pause,
+  trash: Trash2,
   // atalhos e leilão
   gavel: Gavel,
   bag: ShoppingBag,
   tag: Tag,
+  grid: LayoutGrid,
+  rows: Rows3,
 };
 
 // Ícones de categorias.
@@ -53,9 +65,9 @@ const CAT = {
 
 export const icons = { ...UI, ...CAT };
 
-export function Ico({ name, size = 22, stroke = 1.8 }) {
+export function Ico({ name, size = 22, stroke = 1.8, fill = 'none' }) {
   const Cmp = UI[name] || Gem;
-  return <Cmp size={size} strokeWidth={stroke} />;
+  return <Cmp size={size} strokeWidth={stroke} fill={fill} />;
 }
 
 export function CatIcon({ name, size = 18, stroke = 1.7 }) {

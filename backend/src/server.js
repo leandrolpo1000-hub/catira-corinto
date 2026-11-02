@@ -1,13 +1,35 @@
+const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const { seedIfEmpty, ensureExtras, ensureMaster } = require('./seed');
 const { authOptional } = require('./middleware');
 
+function loadEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  const text = fs.readFileSync(filePath, 'utf8');
+  text.split('\n').forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) return;
+    const eq = trimmed.indexOf('=');
+    if (eq < 1) return;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    if (!process.env[key]) process.env[key] = value;
+  });
+}
+
+loadEnvFile(path.join(__dirname, '..', '..', '.env'));
+loadEnvFile(path.join(__dirname, '..', '.env'));
+
 seedIfEmpty();
 ensureExtras();
 ensureMaster();
 try { require('./lance').ensureSettings(); } catch {}
+try { require('./official').ensureOfficialSeller(); } catch {}
 try { require('./auctions/editions').ensureEditions(); } catch {}
 
 const app = express();
@@ -109,6 +131,29 @@ function escapeXml(s) {
     .replace(/"/g, '&quot;');
 }
 
+app.get('/api/meli/callback', async (req, res) => {
+  const meli = require('./meli');
+  const env = meli.envConfig();
+  const redirect = env && env.redirectUri;
+  try {
+    if (req.query.error) {
+      const err = new Error('Autorização recusada no Mercado Livre.');
+      err.status = 400;
+      throw err;
+    }
+    await meli.completeAuth(null, req.query.code, req.query.state);
+    require('./db').insert('officialAdminLogs', {
+      actorId: null,
+      action: 'meli_connected',
+      payload: {},
+      createdAt: new Date().toISOString(),
+    });
+    return res.redirect(meli.frontendReturnUrl(redirect, 'ok', ''));
+  } catch (e) {
+    return res.redirect(meli.frontendReturnUrl(redirect, 'err', e.message || 'Falha ao conectar.'));
+  }
+});
+
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/listings', require('./routes/listings'));
 app.use('/api/auctions', require('./routes/auctions'));
@@ -131,6 +176,10 @@ const lanceTick = setInterval(() => {
   try { require('./lance').expireLance(); } catch (e) { /* mantém o serviço de pé */ }
 }, 15000);
 if (lanceTick.unref) lanceTick.unref();
+const meliTick = setInterval(() => {
+  try { require('./meli').runSyncTick().catch(() => {}); } catch (e) { /* mantém o serviço de pé */ }
+}, 15 * 60 * 1000);
+if (meliTick.unref) meliTick.unref();
 
 app.use((err, _req, res, _next) => {
   if (err && err.message) return res.status(400).json({ error: err.message });

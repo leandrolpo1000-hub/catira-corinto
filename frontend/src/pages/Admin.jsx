@@ -5,6 +5,7 @@ import { useAuth, isAdminRole, isMasterRole } from '../auth';
 import { BrandLogo, Top } from '../components';
 import AdminAuctions from './AdminAuctions';
 import AdminLance from './AdminLance';
+import AdminOfficial from './AdminOfficial';
 
 function Bars({ data, valueKey, green }) {
   const max = Math.max(1, ...data.map((d) => d[valueKey] || 0));
@@ -83,6 +84,11 @@ export default function Admin() {
   const [userStatusFilter, setUserStatusFilter] = useState('');
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if ((params.get('code') && params.get('state')) || params.get('tab') === 'oficial') {
+      setTab('oficial');
+      return;
+    }
     if (isMaster && (tab === 'users' || tab === 'dash')) setTab('dash');
   }, [isMaster]);
 
@@ -324,8 +330,8 @@ export default function Admin() {
         <div className="brand-center"><BrandLogo size="sm" /></div>
         <div className="chips">
           {(isMaster
-            ? [['dash', 'Dashboard'], ['pix', 'PIX'], ['mail', 'E-mail'], ['assist', 'Assistente'], ['leilao', 'Leilão'], ['lance', 'Oportunidades'], ['banner', 'Banner'], ['promo', 'Cupons'], ['pays', 'Pagamentos'], ['rel', 'Relatórios'], ['users', 'Usuários'], ['ads', 'Anúncios'], ['acao', 'Em Ação'], ['rep', 'Denúncias'], ['rev', 'Avaliações'], ['cat', 'Categorias']]
-            : [['leilao', 'Leilão'], ['lance', 'Oportunidades'], ['promo', 'Cupons'], ['pays', 'Pagamentos'], ['rel', 'Relatórios'], ['users', 'Usuários'], ['ads', 'Anúncios'], ['acao', 'Em Ação'], ['rep', 'Denúncias'], ['rev', 'Avaliações'], ['cat', 'Categorias']]
+            ? [['dash', 'Dashboard'], ['pix', 'PIX'], ['mail', 'E-mail'], ['assist', 'Assistente'], ['leilao', 'Leilão'], ['lance', 'Oportunidades'], ['banner', 'Banner'], ['promo', 'Cupons'], ['pays', 'Pagamentos'], ['rel', 'Relatórios'], ['users', 'Usuários'], ['ads', 'Anúncios'], ['acao', 'Em Ação'], ['rep', 'Denúncias'], ['rev', 'Avaliações'], ['cat', 'Categorias'], ['oficial', 'Oficial']]
+            : [['leilao', 'Leilão'], ['lance', 'Oportunidades'], ['promo', 'Cupons'], ['pays', 'Pagamentos'], ['rel', 'Relatórios'], ['users', 'Usuários'], ['ads', 'Anúncios'], ['acao', 'Em Ação'], ['rep', 'Denúncias'], ['rev', 'Avaliações'], ['cat', 'Categorias'], ['oficial', 'Oficial']]
           ).map(([k, l]) => (
             <button key={k} className={'chip' + (tab === k ? ' on' : '')} onClick={() => setTab(k)}>{l}</button>
           ))}
@@ -667,6 +673,7 @@ export default function Admin() {
         {tab === 'leilao' && <AdminAuctions user={user} />}
 
         {tab === 'lance' && <AdminLance user={user} />}
+        {tab === 'oficial' && <AdminOfficial user={user} />}
 
         {tab === 'assist' && isMaster && (
           <>

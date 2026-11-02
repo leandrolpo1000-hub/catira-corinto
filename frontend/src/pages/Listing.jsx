@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, money, reportReasons, typeLabel, priceText, formatBRLInput, parseBRL } from '../api';
 import { useAuth } from '../auth';
-import { conditionText, HomeAdBanner, Top } from '../components';
+import { conditionText, HomeAdBanner, officialLocation, Top } from '../components';
 
 export default function Listing() {
   const { id } = useParams();
@@ -231,9 +231,10 @@ export default function Listing() {
         {ok && <div className="okbox">{ok}</div>}
         <h1 style={{ fontSize: 22 }}>{item.title}</h1>
         <div className="badge-row">
-          {item.listingType === 'procuro' && <span className="badge-want">PROCURO</span>}
-          {(item.listingType === 'troca' || item.listingType === 'venda_troca' || item.acceptsTrade) && item.listingType !== 'procuro' && <span className="badge-trade-inline">ACEITA TROCA</span>}
-          {item.premium && <span className="badge-premium-inline">PREMIUM</span>}
+          {item.isOfficial && <span className="badge-official">CATIRA OFICIAL</span>}
+          {!item.isOfficial && item.listingType === 'procuro' && <span className="badge-want">PROCURO</span>}
+          {!item.isOfficial && (item.listingType === 'troca' || item.listingType === 'venda_troca' || item.acceptsTrade) && item.listingType !== 'procuro' && <span className="badge-trade-inline">ACEITA TROCA</span>}
+          {!item.isOfficial && item.premium && <span className="badge-premium-inline">PREMIUM</span>}
         </div>
         <div className="price-lg">{priceText(item)}</div>
         {item.ratingCount > 0 && (
@@ -243,14 +244,16 @@ export default function Listing() {
           </div>
         )}
         <div className="meta">
-          {typeLabel(item.listingType)} · {item.city}/MG · {item.listingType !== 'procuro' ? conditionText(item.condition) + ' · ' : ''}{item.timeAgo}
+          {item.isOfficial
+            ? 'Produto oficial · ' + officialLocation(item) + ' · ' + conditionText(item.condition)
+            : <>{typeLabel(item.listingType)} · {item.city}/MG · {item.listingType !== 'procuro' ? conditionText(item.condition) + ' · ' : ''}{item.timeAgo}</>}
         </div>
         {item.category && <div className="meta" style={{ marginTop: 4 }}>{item.category.name}{item.subcategory ? ' · ' + item.subcategory : ''}</div>}
         {mine && (
           <p className="hint">{item.views || 0} visualizações · {item.favoritesCount || 0} pessoas salvaram este anúncio</p>
         )}
 
-        {(item.listingType === 'troca' || item.listingType === 'venda_troca' || item.acceptsTrade) && item.listingType !== 'procuro' && (
+        {!item.isOfficial && (item.listingType === 'troca' || item.listingType === 'venda_troca' || item.acceptsTrade) && item.listingType !== 'procuro' && (
           <div className="trade-box">
             <strong>ACEITA TROCA</strong>
             {item.tradeWishes && <p style={{ marginTop: 6 }}>Procura por: {item.tradeWishes}</p>}
@@ -261,7 +264,17 @@ export default function Listing() {
 
         <p style={{ marginTop: 12, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{item.description}</p>
 
-        {item.seller && (
+        {item.isOfficial && (
+          <div className="seller official-seller">
+            <div className="avatar official-avatar">C</div>
+            <div>
+              <strong>CATIRA OFICIAL</strong>
+              <div className="verified">Produto vendido pela plataforma · {officialLocation(item)}</div>
+            </div>
+          </div>
+        )}
+
+        {item.seller && !item.isOfficial && (
           <Link to={'/usuario/' + item.seller.id} className="seller">
             <div className="avatar" style={{ background: item.seller.avatarColor }}>{item.seller.name.slice(0, 1)}</div>
             <div>
@@ -274,7 +287,40 @@ export default function Listing() {
           </Link>
         )}
 
-        {!mine && (
+        {item.isOfficial && item.officialOffers && item.officialOffers.length > 0 && (
+          <div className="official-buy">
+            <strong>Onde comprar</strong>
+            <p className="hint official-note">A compra é feita fora do Catira, na plataforma escolhida.</p>
+            <div className="official-offers">
+              {item.officialOffers.map((o) => (
+                <a
+                  key={o.id}
+                  className={'btn official-offer provider-' + o.provider}
+                  href={o.url}
+                  target="_blank"
+                  rel="noopener noreferrer nofollow"
+                >
+                  <span>{o.providerLabel}</span>
+                  {!!o.price && (
+                    <em>
+                      {o.previousPrice && o.previousPrice > o.price ? <s>{money(o.previousPrice)}</s> : null}
+                      {money(o.price)}
+                    </em>
+                  )}
+                </a>
+              ))}
+            </div>
+            <p className="hint official-note">Preço e disponibilidade podem mudar até a finalização no site do parceiro.</p>
+          </div>
+        )}
+        {item.isOfficial && (
+          <div className="row-btns">
+            <button className="btn btn-ghost" onClick={fav}>{item.favorited ? 'Favoritado' : 'Favoritar'}</button>
+            <button className="btn btn-ghost" onClick={share}>Compartilhar</button>
+          </div>
+        )}
+
+        {!mine && !item.isOfficial && (
           <div className="actions">
             <>
               <button className="btn btn-primary" onClick={() => interest()}>Tenho interesse</button>
@@ -312,6 +358,7 @@ export default function Listing() {
           </div>
         )}
 
+        {!item.isOfficial && (
         <div className="review-box">
           <h2>Avaliações do anúncio</h2>
           {!mine && (
@@ -340,6 +387,7 @@ export default function Listing() {
             </div>
           ))}
         </div>
+        )}
         <HomeAdBanner />
       </div>
 
