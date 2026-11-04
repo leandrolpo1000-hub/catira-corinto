@@ -26,13 +26,15 @@ function parseImportRef(raw) {
       throw httpError(400, 'Use um link do Mercado Livre.');
     }
   }
-  const compact = text.toUpperCase().replace(/-/g, '');
+  let decoded = text;
+  try { decoded = decodeURIComponent(text); } catch { /* keep text */ }
+  const compact = decoded.toUpperCase().replace(/-/g, '');
+  const catalogId = parseCatalogId(text, parsed);
+  const itemFromQuery = compact.match(/(?:ITEM_ID|WID)[=:]MLB(\d{6,15})/);
+  if (itemFromQuery) return { itemId: 'MLB' + itemFromQuery[1], catalogId };
   if (/\/UP\/MLBU\d+|MLBU\d{6,}/.test(compact)) {
     throw httpError(400, 'Essa URL é de catálogo, não de anúncio. Abra um anúncio de um vendedor e cole o link com código MLB (números depois de MLB).');
   }
-  const catalogId = parseCatalogId(text, parsed);
-  const wid = compact.match(/WID=MLB(\d{6,15})/);
-  if (wid) return { itemId: 'MLB' + wid[1], catalogId };
   if (catalogId) return { itemId: null, catalogId };
   const match = compact.match(/MLB(\d{6,15})/);
   if (!match) throw httpError(400, 'Não encontrei o código MLB.');

@@ -54,6 +54,19 @@ export default function Admin() {
   const [mailMsg, setMailMsg] = useState('');
   const [mailErr, setMailErr] = useState('');
   const [mailTestTo, setMailTestTo] = useState('');
+  const [appmaxCfg, setAppmaxCfg] = useState({
+    clientId: '',
+    clientSecret: '',
+    clientSecretSet: false,
+    clientSecretHint: '',
+    externalId: '',
+    webhookConfigured: false,
+    webhookUrl: '',
+    env: 'production',
+    source: {},
+  });
+  const [appmaxMsg, setAppmaxMsg] = useState('');
+  const [appmaxErr, setAppmaxErr] = useState('');
   const [banner, setBanner] = useState({ enabled: false, imageUrl: '', link: '', title: '' });
   const [bannerFile, setBannerFile] = useState(null);
   const [bannerMsg, setBannerMsg] = useState('');
@@ -82,6 +95,8 @@ export default function Admin() {
   const [userRoleFilter, setUserRoleFilter] = useState('');
   const [userCityFilter, setUserCityFilter] = useState('');
   const [userStatusFilter, setUserStatusFilter] = useState('');
+  const [orders, setOrders] = useState([]);
+  const [orderDetail, setOrderDetail] = useState(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -111,6 +126,7 @@ export default function Admin() {
     api('/api/admin/promos').then((d) => setPromos(d.items || [])).catch(() => {});
     api('/api/admin/reviews').then((d) => setReviewsAdmin(d.items || [])).catch(() => {});
     api('/api/admin/acao').then((d) => setActionPosts(d.items || [])).catch(() => {});
+    api('/api/admin/orders').then((d) => setOrders(d.items || [])).catch(() => {});
     if (user.role === 'master') {
       api('/api/admin/pix').then((d) => {
         setPix({
@@ -129,6 +145,7 @@ export default function Admin() {
         setMail({ ...d, apiKey: '' });
         setMailTestTo((t) => t || user.email || '');
       }).catch(() => {});
+      api('/api/admin/appmax').then((d) => setAppmaxCfg({ ...d, clientSecret: '' })).catch(() => {});
       api('/api/admin/banner').then(setBanner).catch(() => {});
       api('/api/admin/assistant').then((d) => setAssist({ ...d, apiKey: '' })).catch(() => {});
     }
@@ -330,8 +347,8 @@ export default function Admin() {
         <div className="brand-center"><BrandLogo size="sm" /></div>
         <div className="chips">
           {(isMaster
-            ? [['dash', 'Dashboard'], ['pix', 'PIX'], ['mail', 'E-mail'], ['assist', 'Assistente'], ['leilao', 'Leilão'], ['lance', 'Oportunidades'], ['banner', 'Banner'], ['promo', 'Cupons'], ['pays', 'Pagamentos'], ['rel', 'Relatórios'], ['users', 'Usuários'], ['ads', 'Anúncios'], ['acao', 'Em Ação'], ['rep', 'Denúncias'], ['rev', 'Avaliações'], ['cat', 'Categorias'], ['oficial', 'Oficial']]
-            : [['leilao', 'Leilão'], ['lance', 'Oportunidades'], ['promo', 'Cupons'], ['pays', 'Pagamentos'], ['rel', 'Relatórios'], ['users', 'Usuários'], ['ads', 'Anúncios'], ['acao', 'Em Ação'], ['rep', 'Denúncias'], ['rev', 'Avaliações'], ['cat', 'Categorias'], ['oficial', 'Oficial']]
+            ? [['dash', 'Dashboard'], ['pix', 'PIX'], ['appmax', 'Appmax'], ['mail', 'E-mail'], ['assist', 'Assistente'], ['leilao', 'Leilão'], ['lance', 'Oportunidades'], ['banner', 'Banner'], ['promo', 'Cupons'], ['pays', 'Pagamentos'], ['pedidos', 'Pedidos'], ['rel', 'Relatórios'], ['users', 'Usuários'], ['ads', 'Anúncios'], ['acao', 'Em Ação'], ['rep', 'Denúncias'], ['rev', 'Avaliações'], ['cat', 'Categorias'], ['oficial', 'Oficial']]
+            : [['leilao', 'Leilão'], ['lance', 'Oportunidades'], ['promo', 'Cupons'], ['pays', 'Pagamentos'], ['pedidos', 'Pedidos'], ['rel', 'Relatórios'], ['users', 'Usuários'], ['ads', 'Anúncios'], ['acao', 'Em Ação'], ['rep', 'Denúncias'], ['rev', 'Avaliações'], ['cat', 'Categorias'], ['oficial', 'Oficial']]
           ).map(([k, l]) => (
             <button key={k} className={'chip' + (tab === k ? ' on' : '')} onClick={() => setTab(k)}>{l}</button>
           ))}
@@ -583,6 +600,75 @@ export default function Admin() {
               <button className="btn btn-primary">Salvar PIX e taxa</button>
             </form>
             <p className="hint">{pix.configured ? 'PIX configurado. QR Code e copia e cola já usam esta chave.' : 'Ainda não há chave. Sem ela o anunciante não consegue pagar.'}</p>
+          </>
+        )}
+
+        {tab === 'appmax' && isMaster && (
+          <>
+            <h2 style={{ fontSize: 18, margin: '8px 0 12px' }}>Appmax</h2>
+            <p className="lead">Cole Client ID, Client Secret e External ID do painel Merchant da Appmax (produção). O Catira gera o token do webhook. Checkout público continua fechado.</p>
+            {appmaxErr && <div className="error">{appmaxErr}</div>}
+            {appmaxMsg && <div className="okbox">{appmaxMsg}</div>}
+            <form className="filters" onSubmit={async (e) => {
+              e.preventDefault();
+              setAppmaxErr('');
+              setAppmaxMsg('');
+              try {
+                const body = {
+                  clientId: appmaxCfg.clientId,
+                  externalId: appmaxCfg.externalId,
+                };
+                if (appmaxCfg.clientSecret && appmaxCfg.clientSecret.trim()) body.clientSecret = appmaxCfg.clientSecret.trim();
+                const d = await api('/api/admin/appmax', { method: 'PUT', body: JSON.stringify(body) });
+                setAppmaxCfg({ ...d, clientSecret: '' });
+                if (d.authTest && d.authTest.ok) setAppmaxMsg('Login na Appmax ok.');
+                else setAppmaxMsg((d.authTest && d.authTest.error) || 'Configuração salva, mas o login na Appmax falhou.');
+              } catch (ex) {
+                setAppmaxErr(ex.message);
+              }
+            }}>
+              <div className="field">
+                <label>Client ID</label>
+                <input
+                  value={appmaxCfg.clientId || ''}
+                  onChange={(e) => setAppmaxCfg({ ...appmaxCfg, clientId: e.target.value })}
+                  autoComplete="off"
+                />
+              </div>
+              <div className="field">
+                <label>Client Secret</label>
+                <input
+                  type="password"
+                  value={appmaxCfg.clientSecret || ''}
+                  onChange={(e) => setAppmaxCfg({ ...appmaxCfg, clientSecret: e.target.value })}
+                  placeholder={appmaxCfg.clientSecretHint || ''}
+                  autoComplete="off"
+                />
+                <div className="hint">{appmaxCfg.clientSecretSet ? 'Secret salvo: ' + appmaxCfg.clientSecretHint + '. Deixe em branco para manter.' : 'Copie o Client Secret no card da loja (admin.appmax.com.br, menu API). Aparece uma vez; não é o External ID.'}</div>
+              </div>
+              <div className="field">
+                <label>External ID</label>
+                <input
+                  value={appmaxCfg.externalId || ''}
+                  onChange={(e) => setAppmaxCfg({ ...appmaxCfg, externalId: e.target.value })}
+                  autoComplete="off"
+                />
+              </div>
+              <button className="btn btn-primary">Salvar Appmax</button>
+            </form>
+            {appmaxCfg.webhookUrl ? (
+              <div className="field">
+                <label>URL do webhook (cole no painel Appmax)</label>
+                <input readOnly value={appmaxCfg.webhookUrl} />
+                <div className="hint">Troque SEU-DOMINIO pelo endereço HTTPS público quando existir. Localhost a Appmax não alcança.</div>
+              </div>
+            ) : null}
+            <p className="hint">
+              Client ID: {appmaxCfg.clientId ? 'salvo' : 'faltando'}.
+              Secret: {appmaxCfg.clientSecretSet ? 'salvo' : 'faltando'}.
+              External ID: {appmaxCfg.externalId ? 'salvo' : 'faltando'}.
+              Webhook: {appmaxCfg.webhookConfigured ? 'salvo' : 'faltando'}.
+            </p>
           </>
         )}
 
@@ -895,6 +981,60 @@ export default function Admin() {
               </div>
             ))}
             {!pays.length && <p className="hint">Nenhum pagamento ainda.</p>}
+          </>
+        )}
+
+        {tab === 'pedidos' && (
+          <>
+            <h2 style={{ fontSize: 18, margin: '8px 0 12px' }}>Pedidos Catira</h2>
+            <p className="lead">Consulta interna. Compra pelo Catira ainda não está disponível.</p>
+            {orders.map((o) => (
+              <div key={o.id} className="list-item" style={{ flexDirection: 'column' }}>
+                <strong>{o.productTitle || 'Pedido'}</strong>
+                <div className="meta">{money((o.totalCents || 0) / 100)} · qtd {o.quantity} · {o.status}</div>
+                <div className="hint">
+                  {o.paymentMethod === 'credit_card' ? 'Cartão' : o.paymentMethod === 'pix' ? 'Pix' : 'Sem cobrança'}
+                  {o.appmaxOrderId != null ? ' · Pedido Appmax ' + o.appmaxOrderId : ''}
+                  {o.appmaxPaymentStatus ? ' · Status Appmax ' + o.appmaxPaymentStatus : ''}
+                  {o.cardInstallments ? ' · Parcelas ' + o.cardInstallments : ''}
+                </div>
+                <div className="hint">ID {o.id}</div>
+                <button className="btn btn-ghost" style={{ marginTop: 8 }} onClick={async () => {
+                  const d = await api('/api/admin/orders/' + o.id);
+                  setOrderDetail(d);
+                }}>Ver detalhes</button>
+              </div>
+            ))}
+            {!orders.length && <p className="hint">Nenhum pedido ainda.</p>}
+            {orderDetail && orderDetail.order && (
+              <div className="card" style={{ marginTop: 12 }}>
+                <strong>Pedido {orderDetail.order.id}</strong>
+                <p className="hint">{orderDetail.order.status} · {money((orderDetail.order.totalCents || 0) / 100)}</p>
+                {orderDetail.order.address && (
+                  <p className="hint">
+                    {orderDetail.order.address.recipientName} · {orderDetail.order.address.street}, {orderDetail.order.address.number} · {orderDetail.order.address.city}/{orderDetail.order.address.state}
+                  </p>
+                )}
+                {orderDetail.order.payment && (
+                  <>
+                    <p className="hint">Método: {orderDetail.order.payment.method === 'credit_card' ? 'Cartão' : orderDetail.order.payment.method === 'pix' ? 'Pix' : '—'}</p>
+                    <p className="hint">Pedido Appmax: {orderDetail.order.payment.appmaxOrderId == null ? '—' : orderDetail.order.payment.appmaxOrderId}</p>
+                    <p className="hint">Pagamento Appmax: {orderDetail.order.payment.appmaxPaymentId == null ? '—' : orderDetail.order.payment.appmaxPaymentId}</p>
+                    <p className="hint">Status Appmax: {orderDetail.order.payment.appmaxPaymentStatus || '—'}</p>
+                    <p className="hint">Estado Catira: {orderDetail.order.payment.catiraStatus}</p>
+                    {orderDetail.order.payment.cardInstallments != null && (
+                      <p className="hint">Parcelas: {orderDetail.order.payment.cardInstallments}</p>
+                    )}
+                  </>
+                )}
+                <p className="hint">Eventos:</p>
+                {(orderDetail.events || []).map((e) => (
+                  <p key={e.id} className="hint">
+                    {e.at} · {e.type}{e.fromStatus || e.toStatus ? ' · ' + (e.fromStatus || '—') + ' → ' + (e.toStatus || '—') : ''}
+                  </p>
+                ))}
+              </div>
+            )}
           </>
         )}
 

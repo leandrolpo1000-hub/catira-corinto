@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, money, formatBRLInput, parseBRL, condLabel } from '../api';
 
 const PROVIDERS = [
+  ['catira', 'Catira'],
   ['mercadolivre', 'Mercado Livre'],
   ['shopee', 'Shopee'],
   ['amazon', 'Amazon'],
@@ -257,7 +258,7 @@ export default function AdminOfficial() {
       productId: product.id,
       offerId: offer ? offer.id : '',
       title: product.title,
-      provider: offer ? offer.provider : 'mercadolivre',
+      provider: offer ? offer.provider : 'catira',
       priceLabel: offer ? toLabel(offer.price) : '',
       previousPriceLabel: offer ? toLabel(offer.previousPrice) : '',
       url: offer ? (offer.url || '') : '',
@@ -273,14 +274,15 @@ export default function AdminOfficial() {
     setOfferErr('');
     setBusy(true);
     try {
+      const isCatira = offerForm.provider === 'catira';
       const body = JSON.stringify({
         provider: offerForm.provider,
         price: offerForm.priceLabel ? parseBRL(offerForm.priceLabel) : null,
         previousPrice: offerForm.previousPriceLabel ? parseBRL(offerForm.previousPriceLabel) : null,
-        url: offerForm.url,
+        url: isCatira ? '' : offerForm.url,
         stock: Number(offerForm.stock || 0),
         status: offerForm.status,
-        affiliateTag: offerForm.affiliateTag,
+        affiliateTag: isCatira ? '' : offerForm.affiliateTag,
         note: offerForm.note,
       });
       if (offerForm.offerId) {
@@ -463,7 +465,7 @@ export default function AdminOfficial() {
                 <form onSubmit={importMeli}>
                   <input value={meliUrl} onChange={(e) => setMeliUrl(e.target.value)} placeholder="URL do anúncio, /p/ ou código MLB…" />
                   <button type="submit" className="btn" disabled={meliBusy}>{meliBusy ? 'Importando…' : 'Importar'}</button>
-                  <div className="hint">Cole anúncio próprio (MLB) ou página /p/ de terceiro (wid= escolhe o vendedor; senão o menor preço). Catálogo /up/MLBU não importa.</div>
+                  <div className="hint">Cole anúncio próprio (MLB), página /p/ de terceiro (wid= escolhe o vendedor; senão o menor preço) ou /up/MLBU com item_id=MLB na URL. Catálogo /up/MLBU sem item_id não importa.</div>
                 </form>
               </>
             ) : (
@@ -502,6 +504,7 @@ export default function AdminOfficial() {
                     <em className={'offer-state ' + (o.live ? 'live' : 'off')}>
                       {o.live ? (OFFER_LABEL[o.status] || o.status) : (OFFER_LABEL[o.status] || 'Inativa')}
                     </em>
+                    {o.provider === 'catira' && <em className="offer-state warn">em preparação</em>}
                     {o.incomplete && <em className="offer-state warn">incompleta</em>}
                     {o.source === 'process' && o.lastSyncAt && <span className="hint">sync {formatWhen(o.lastSyncAt)}</span>}
                     {o.updatedAt && <span className="hint">atualizada {formatWhen(o.updatedAt)}</span>}
@@ -651,7 +654,11 @@ export default function AdminOfficial() {
           <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={saveOffer}>
             <h3>{offerForm.offerId ? 'Editar oferta' : 'Nova oferta'} — {offerForm.title}</h3>
             {offerErr && <div className="error">{offerErr}</div>}
-            <p className="hint">A compra acontece na plataforma parceira. Preço informado não altera o preço comercial do produto.</p>
+            <p className="hint">
+              {offerForm.provider === 'catira'
+                ? 'Oferta própria do Catira. Sem URL. Preço independente do mosaico e do Mercado Livre. Compra permanece em preparação nesta fase.'
+                : 'A compra acontece na plataforma parceira. Preço informado não altera o preço comercial do produto.'}
+            </p>
             <div className="field">
               <label>Plataforma</label>
               <select value={offerForm.provider} onChange={(e) => setOfferForm({ ...offerForm, provider: e.target.value })} disabled={!!offerForm.offerId}>
@@ -659,33 +666,41 @@ export default function AdminOfficial() {
               </select>
             </div>
             <div className="field">
-              <label>Preço anunciado (opcional)</label>
+              <label>{offerForm.provider === 'catira' ? 'Preço Catira' : 'Preço anunciado (opcional)'}</label>
               <input value={offerForm.priceLabel} onChange={(e) => setOfferForm({ ...offerForm, priceLabel: formatBRLInput(e.target.value) })} inputMode="numeric" placeholder="0,00" />
             </div>
-            <div className="field">
-              <label>Preço anterior (opcional)</label>
-              <input value={offerForm.previousPriceLabel} onChange={(e) => setOfferForm({ ...offerForm, previousPriceLabel: formatBRLInput(e.target.value) })} inputMode="numeric" placeholder="0,00" />
-            </div>
-            <div className="field">
-              <label>Link oficial</label>
-              <input value={offerForm.url} onChange={(e) => setOfferForm({ ...offerForm, url: e.target.value })} placeholder="https://" required={offerForm.status !== 'suspended'} />
-            </div>
-            <div className="grid2">
+            {offerForm.provider !== 'catira' && (
               <div className="field">
-                <label>Estoque</label>
-                <input value={offerForm.stock} onChange={(e) => setOfferForm({ ...offerForm, stock: e.target.value.replace(/\D/g, '') })} inputMode="numeric" placeholder="0" />
+                <label>Preço anterior (opcional)</label>
+                <input value={offerForm.previousPriceLabel} onChange={(e) => setOfferForm({ ...offerForm, previousPriceLabel: formatBRLInput(e.target.value) })} inputMode="numeric" placeholder="0,00" />
               </div>
+            )}
+            {offerForm.provider !== 'catira' && (
+              <div className="field">
+                <label>Link oficial</label>
+                <input value={offerForm.url} onChange={(e) => setOfferForm({ ...offerForm, url: e.target.value })} placeholder="https://" required={offerForm.status !== 'suspended'} />
+              </div>
+            )}
+            <div className="grid2">
+              {offerForm.provider !== 'catira' && (
+                <div className="field">
+                  <label>Estoque</label>
+                  <input value={offerForm.stock} onChange={(e) => setOfferForm({ ...offerForm, stock: e.target.value.replace(/\D/g, '') })} inputMode="numeric" placeholder="0" />
+                </div>
+              )}
               <div className="field">
                 <label>Situação</label>
                 <select value={offerForm.status} onChange={(e) => setOfferForm({ ...offerForm, status: e.target.value })}>
-                  {OFFER_STATUS.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  {(offerForm.provider === 'catira' ? OFFER_STATUS.filter(([k]) => k === 'manual' || k === 'suspended') : OFFER_STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select>
               </div>
             </div>
-            <div className="field">
-              <label>Identificador de afiliado (opcional)</label>
-              <input value={offerForm.affiliateTag} onChange={(e) => setOfferForm({ ...offerForm, affiliateTag: e.target.value })} />
-            </div>
+            {offerForm.provider !== 'catira' && (
+              <div className="field">
+                <label>Identificador de afiliado (opcional)</label>
+                <input value={offerForm.affiliateTag} onChange={(e) => setOfferForm({ ...offerForm, affiliateTag: e.target.value })} />
+              </div>
+            )}
             <div className="field">
               <label>Observação</label>
               <input value={offerForm.note} onChange={(e) => setOfferForm({ ...offerForm, note: e.target.value })} />

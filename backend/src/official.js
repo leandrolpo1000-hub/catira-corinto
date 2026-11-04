@@ -7,7 +7,7 @@ const PLATFORM_NAME = 'CATIRA OFICIAL';
 const PROVIDERS = ['catira', 'mercadolivre', 'shopee', 'amazon', 'other'];
 const EXTERNAL_PROVIDERS = ['mercadolivre', 'shopee', 'amazon', 'other'];
 const PROVIDER_LABEL = {
-  catira: 'Comprar pelo Catira',
+  catira: 'Oferta Catira',
   mercadolivre: 'Comprar no Mercado Livre',
   shopee: 'Comprar na Shopee',
   amazon: 'Comprar na Amazon',
@@ -54,6 +54,45 @@ function ensureOfficialSeller() {
     ratingCount: 0,
     avatarColor: '#111827',
   });
+}
+
+const TEST_PIX_TITLE = 'Teste Pix R$ 10';
+
+function ensureTestPixProduct() {
+  const seller = ensureOfficialSeller();
+  const existing = db.findOne('officialProducts', (p) => p.title === TEST_PIX_TITLE);
+  const cat = db.findOne('categories', (c) => c.active !== false) || db.findOne('categories', () => true);
+  if (!cat) throw httpError(500, 'Categoria ausente.');
+  let product = existing;
+  if (!product) {
+    const created = createProduct({
+      title: TEST_PIX_TITLE,
+      description: 'Produto de teste da compra Pix pelo Catira. Cobrança real de R$ 10.',
+      categoryId: cat.id,
+      condition: 'novo',
+      pricingRule: 'fixed',
+      manualPrice: 10,
+      published: true,
+      cityId: 'corinto',
+      city: 'Corinto',
+      delivery: { mode: 'cities', cityIds: ['corinto'] },
+    }, { id: seller.id });
+    product = created.product;
+  }
+  const offerOut = upsertOffer(product.id, {
+    provider: 'catira',
+    price: 10,
+    stock: 10,
+    status: 'active',
+    enabled: true,
+    buyEnabled: true,
+  }, { id: seller.id });
+  return {
+    product: productOf(product.id),
+    offer: offerOut.offer,
+    listing: db.findById('listings', productOf(product.id).listingId),
+    created: !existing,
+  };
 }
 
 function isPlatformUser(user) {
@@ -487,9 +526,14 @@ function sanitizeOfferInput(body, current) {
   if (b.previousPrice !== undefined) {
     out.previousPrice = optionalMoney(b.previousPrice);
   }
+  const providerHint = b.provider !== undefined ? b.provider : (current && current.provider);
   if (b.url !== undefined || !current) {
-    const raw = String(b.url || '').trim();
-    out.url = raw ? normalizeOfferUrl(raw) : '';
+    if (providerHint === 'catira') {
+      out.url = '';
+    } else {
+      const raw = String(b.url || '').trim();
+      out.url = raw ? normalizeOfferUrl(raw) : '';
+    }
   }
   if (b.stock !== undefined) {
     const stockRaw = Number(b.stock);
@@ -514,6 +558,14 @@ function sanitizeOfferInput(body, current) {
     if (wantsLive && !isSafeHttpUrl(next.url)) {
       throw httpError(400, 'Oferta ativa precisa de um link http(s) válido.');
     }
+  }
+  if (provider === 'catira') {
+    if (b.commercialReady === true || b.commercialAvailability === 'available') {
+      throw httpError(400, 'A compra pelo Catira ainda não está disponível nesta fase.');
+    }
+    out.commercialReady = false;
+    if (b.buyEnabled !== undefined) out.buyEnabled = !!b.buyEnabled;
+    if (b.url !== undefined || !current) out.url = '';
   }
   if (next.source !== 'process') next.source = 'manual';
   if (!next.status) next.status = 'manual';
@@ -540,6 +592,13 @@ function upsertOffer(productId, body, actor) {
     updatedAt: now,
     updatedBy: actor ? actor.id : null,
   };
+  if (input.provider === 'catira') {
+    patch.commercialReady = false;
+    patch.url = '';
+    if (input.buyEnabled === undefined) {
+      patch.buyEnabled = existing ? !!existing.buyEnabled : false;
+    }
+  }
   const row = existing
     ? db.update('officialProductOffers', existing.id, patch)
     : db.insert('officialProductOffers', { ...patch, createdAt: now, previousPrice: input.previousPrice || null });
@@ -560,12 +619,17 @@ function updateOffer(productId, offerId, body, actor) {
   if (!offer || offer.productId !== product.id) throw httpError(404, 'Oferta não encontrada.');
   const input = sanitizeOfferInput(body, offer);
   const now = new Date().toISOString();
-  const row = db.update('officialProductOffers', offer.id, {
+  const patch = {
     ...input,
     lastCheckedAt: now,
     updatedAt: now,
     updatedBy: actor ? actor.id : null,
-  });
+  };
+  if ((input.provider || offer.provider) === 'catira') {
+    patch.commercialReady = false;
+    patch.url = '';
+  }
+  const row = db.update('officialProductOffers', offer.id, patch);
   refreshProductAvailability(product.id, { now: Date.now() });
   logOfficial(actor, 'offer_updated', {
     productId: product.id,
@@ -614,6 +678,7 @@ function refreshProductAvailability(productId, opts = {}) {
 function offerIncomplete(offer) {
   if (!offer) return true;
   if (isExternalProvider(offer.provider) && !isSafeHttpUrl(offer.url)) return true;
+  if (offer.provider === 'catira' && !(money2(offer.price) > 0)) return true;
   return false;
 }
 
@@ -621,19 +686,24 @@ function serializeOffer(offer, opts = {}) {
   const now = opts.now || Date.now();
   const live = offerIsLive(offer, now);
   const publicView = !!opts.public;
+  const catira = offer.provider === 'catira';
+  const catiraBuy = catira && offer.buyEnabled === true && money2(offer.price) > 0;
   return {
     id: offer.id,
     provider: offer.provider,
     providerLabel: PROVIDER_LABEL[offer.provider] || offer.provider,
     price: offer.price || 0,
     previousPrice: offer.previousPrice || null,
-    url: publicView ? (live ? offer.url : '') : (offer.url || ''),
+    url: catira ? '' : (publicView ? (live ? offer.url : '') : (offer.url || '')),
     stock: offer.stock || 0,
     enabled: offer.enabled !== false,
     status: offer.status || 'manual',
     source: offer.source || 'manual',
     live,
     incomplete: offerIncomplete(offer),
+    commercialReady: catira ? false : undefined,
+    commercialAvailability: catira ? (catiraBuy ? 'available' : 'preparing') : undefined,
+    buyEnabled: catira ? catiraBuy : undefined,
     affiliateTag: publicView ? undefined : (offer.affiliateTag || ''),
     note: publicView ? undefined : (offer.note || ''),
     lastSyncAt: publicView ? undefined : (offer.lastSyncAt || null),
@@ -646,7 +716,10 @@ function serializeOffer(offer, opts = {}) {
 
 function publicOffersOf(productId, opts = {}) {
   const now = opts.now || Date.now();
-  return offersOf(productId, { now }).filter((o) => isExternalProvider(o.provider) && isSafeHttpUrl(o.url));
+  return offersOf(productId, { now }).filter((o) => {
+    if (o.provider === 'catira') return money2(o.price) > 0;
+    return isExternalProvider(o.provider) && isSafeHttpUrl(o.url);
+  });
 }
 
 function serializeProduct(product, opts = {}) {
@@ -806,6 +879,7 @@ module.exports = {
   STALE_HOURS,
   PRICING_RULES,
   ensureOfficialSeller,
+  ensureTestPixProduct,
   isPlatformUser,
   isPlatformId,
   isOfficialListing,

@@ -69,6 +69,14 @@ async function run() {
   }
   assert.ok(threw, 'catálogo MLBU');
   assert.ok(/catálogo|anúncio/i.test(catalogErr.message), catalogErr.message);
+  const refUpItem = meli.parseImportRef(
+    'https://www.mercadolivre.com.br/esteira-ergometrica/up/MLBU4760101286?pdp_filters=item_id%3AMLB5095137143'
+  );
+  assert.deepStrictEqual(refUpItem, { itemId: 'MLB5095137143', catalogId: null });
+  assert.strictEqual(
+    meli.parseItemId('https://www.mercadolivre.com.br/esteira/up/MLBU4760101286?item_id=MLB5095137143'),
+    'MLB5095137143'
+  );
 
   assert.strictEqual(meli.mapCondition(ITEM), 'novo');
   assert.strictEqual(meli.mapCondition({ condition: 'used' }), 'usado');

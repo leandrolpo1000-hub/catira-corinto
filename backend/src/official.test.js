@@ -301,8 +301,111 @@ async function run() {
     const listed = official.serializeProduct(official.productOf(product.id));
     assert.ok(listed.offers.length >= 3, 'múltiplas ofertas no mesmo produto');
     const publicLive = official.publicOffersOf(product.id);
-    assert.ok(publicLive.every((o) => o.url && official.isSafeHttpUrl(o.url)), 'comprador só vê URL válida');
-    assert.ok(publicLive.every((o) => o.provider !== 'catira'), 'checkout interno não entra em Onde comprar');
+    const publicExternal = publicLive.filter((o) => o.provider !== 'catira');
+    assert.ok(publicExternal.every((o) => o.url && official.isSafeHttpUrl(o.url)), 'comprador só vê URL válida nas externas');
+    assert.ok(publicLive.some((o) => o.provider === 'catira'), 'oferta Catira ativa aparece ao consumidor');
+
+    // Fase 2C: oferta comercial Catira sem URL, em preparação, preço independente.
+    const mosaicBefore = db.findById('officialProducts', product.id);
+    const mosaicCost = mosaicBefore.costPrice;
+    const mosaicManual = mosaicBefore.manualPrice;
+    const mosaicComputed = official.computePrice(mosaicBefore);
+    const mlBefore = db.findOne('officialProductOffers', (o) => o.productId === product.id && o.provider === 'mercadolivre');
+    const mlPriceBefore = mlBefore ? mlBefore.price : null;
+
+    const catiraUp = official.upsertOffer(
+      product.id,
+      { provider: 'catira', price: 125, url: '' },
+      { id: seller.id }
+    );
+    ids.offers.push(catiraUp.offer.id);
+    assert.strictEqual(catiraUp.offer.provider, 'catira');
+    assert.strictEqual(catiraUp.offer.url, '', 'Catira não exige URL');
+    assert.strictEqual(catiraUp.offer.price, 125, 'preço próprio gravado');
+    assert.strictEqual(catiraUp.offer.commercialReady, false, 'sempre em preparação');
+    assert.strictEqual(catiraUp.offer.buyEnabled, false, 'Catira nova sem compra');
+    assert.ok(official.offerIsLive(catiraUp.offer, Date.now()), 'Catira ativa sem URL');
+
+    expectStatus(
+      () => official.upsertOffer(
+        product.id,
+        { provider: 'catira', price: 125, commercialReady: true },
+        { id: seller.id }
+      ),
+      400,
+      'não libera compra nesta fase'
+    );
+    assert.strictEqual(
+      db.findOne('officialProductOffers', (o) => o.productId === product.id && o.provider === 'catira').commercialReady,
+      false,
+      'commercialReady permanece false'
+    );
+
+    const opened = official.upsertOffer(
+      product.id,
+      { provider: 'catira', price: 125, buyEnabled: true },
+      { id: seller.id }
+    );
+    assert.strictEqual(opened.offer.buyEnabled, true, 'buyEnabled grava');
+    assert.strictEqual(opened.offer.commercialReady, false, 'commercialReady segue false');
+    const shownOpen = official.serializeOffer(opened.offer, { public: true });
+    assert.strictEqual(shownOpen.buyEnabled, true);
+    assert.strictEqual(shownOpen.commercialAvailability, 'available');
+    official.upsertOffer(
+      product.id,
+      { provider: 'catira', price: 125, buyEnabled: false },
+      { id: seller.id }
+    );
+
+    const pricedCatira = official.updateOffer(product.id, catiraUp.offer.id, { price: 118.5 }, { id: seller.id });
+    assert.strictEqual(pricedCatira.offer.price, 118.5, 'edição do preço próprio');
+    assert.strictEqual(pricedCatira.offer.commercialReady, false);
+
+    const mosaicAfter = db.findById('officialProducts', product.id);
+    assert.strictEqual(mosaicAfter.costPrice, mosaicCost, 'costPrice intacto');
+    assert.strictEqual(mosaicAfter.manualPrice, mosaicManual, 'manualPrice intacto');
+    assert.strictEqual(official.computePrice(mosaicAfter), mosaicComputed, 'preço do mosaico intacto');
+    const mlAfterPrice = db.findOne('officialProductOffers', (o) => o.productId === product.id && o.provider === 'mercadolivre');
+    assert.strictEqual(mlAfterPrice.price, mlPriceBefore, 'preço ML independente da Catira');
+
+    const publicCatira = official.publicOffersOf(product.id).find((o) => o.provider === 'catira');
+    assert.ok(publicCatira, 'preço Catira visível ao consumidor');
+    assert.strictEqual(publicCatira.price, 118.5);
+    const shownPublic = official.serializeOffer(publicCatira, { public: true });
+    assert.strictEqual(shownPublic.commercialReady, false);
+    assert.strictEqual(shownPublic.buyEnabled, false);
+    assert.strictEqual(shownPublic.commercialAvailability, 'preparing');
+    assert.ok(!shownPublic.url, 'sem link de compra Catira');
+
+    const listingView = require('./helpers').serializeListing(db.findById('listings', listing.id), {
+      userId: maria.id,
+      user: maria,
+    });
+    const shownCatira = listingView.officialOffers.find((o) => o.provider === 'catira');
+    assert.ok(shownCatira, 'ficha expõe oferta Catira');
+    assert.strictEqual(shownCatira.price, 118.5);
+    assert.strictEqual(shownCatira.commercialReady, false);
+    assert.strictEqual(shownCatira.commercialAvailability, 'preparing');
+    assert.ok(
+      listingView.officialOffers.some((o) => o.provider === 'mercadolivre' && o.url),
+      'links externos seguem na ficha'
+    );
+
+    official.setOfferStatus(product.id, catiraUp.offer.id, 'suspended', { id: seller.id });
+    assert.ok(!official.publicOffersOf(product.id).some((o) => o.provider === 'catira'), 'suspensa some para o consumidor');
+    official.setOfferStatus(product.id, catiraUp.offer.id, 'manual', { id: seller.id });
+    assert.ok(official.publicOffersOf(product.id).some((o) => o.provider === 'catira'), 'reativada volta ao consumidor');
+
+    official.upsertOffer(
+      product.id,
+      { provider: 'mercadolivre', price: 199.9, url: 'https://www.mercadolivre.com.br/p/1' },
+      { id: seller.id }
+    );
+    const catiraAfterMl = db.findOne('officialProductOffers', (o) => o.productId === product.id && o.provider === 'catira');
+    assert.strictEqual(catiraAfterMl.price, 118.5, 'upsert ML não altera preço Catira');
+    assert.strictEqual(catiraAfterMl.commercialReady, false);
+    assert.strictEqual(db.findById('officialProducts', product.id).costPrice, mosaicCost);
+    assert.strictEqual(db.findById('officialProducts', product.id).manualPrice, mosaicManual);
 
     const edited = official.updateOffer(
       product.id,
@@ -450,6 +553,26 @@ async function run() {
     );
   } finally {
     cleanup(ids);
+  }
+
+  const pixIds = { products: [], offers: [] };
+  try {
+    const first = official.ensureTestPixProduct();
+    pixIds.products.push(first.product.id);
+    pixIds.offers.push(first.offer.id);
+    assert.strictEqual(first.product.title, 'Teste Pix R$ 10');
+    assert.strictEqual(first.offer.provider, 'catira');
+    assert.strictEqual(first.offer.price, 10);
+    assert.strictEqual(first.offer.stock, 10);
+    assert.strictEqual(first.offer.buyEnabled, true);
+    assert.strictEqual(first.offer.commercialReady, false);
+    assert.strictEqual(first.offer.status, 'active');
+    assert.ok(first.product.published);
+    const second = official.ensureTestPixProduct();
+    assert.strictEqual(second.product.id, first.product.id, 'idempotente');
+    assert.strictEqual(second.offer.id, first.offer.id);
+  } finally {
+    cleanup(pixIds);
   }
 
   console.log('OK official tests');

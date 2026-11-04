@@ -11,6 +11,7 @@ const { getSettings, saveSettings } = require('../pix');
 const { publicMailSettings, saveMailSettings, sendTestEmail } = require('../mail');
 const { publicAssistantSettings, saveAssistantSettings } = require('../assistant');
 const { adminBanner, saveBannerSettings } = require('../banner');
+const { publicAppmaxSettings, saveAppmaxSettings, testAuth } = require('../appmax');
 
 const router = express.Router();
 router.use(adminRequired);
@@ -543,6 +544,26 @@ router.put('/assistant', masterRequired, (req, res) => {
   }
 });
 
+router.get('/appmax', masterRequired, (_req, res) => {
+  res.json(publicAppmaxSettings());
+});
+
+router.put('/appmax', masterRequired, async (req, res) => {
+  try {
+    saveAppmaxSettings(req.body || {});
+  } catch (e) {
+    return res.status(e.status || 400).json({ error: e.message || 'Não foi possível salvar.' });
+  }
+  let authTest;
+  try {
+    await testAuth();
+    authTest = { ok: true };
+  } catch (e) {
+    authTest = { ok: false, error: e.message || 'Falha de autenticação na Appmax.' };
+  }
+  res.json({ ...publicAppmaxSettings(), authTest });
+});
+
 router.post('/mail/test', masterRequired, async (req, res) => {
   const to = String((req.body && req.body.to) || req.user.email || '').trim();
   if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
@@ -805,6 +826,8 @@ router.post('/official/products/:id/meli/sync', officialAsync(async (req) => {
     offer: official.serializeOffer(out.offer),
   };
 }));
+
+require('./orders').attachAdmin(router);
 
 router.get('/official/products', officialHandler((req) => {
   const official = require('../official');

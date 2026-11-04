@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node src/server.js",
-    "test": "node src/action.test.js && node src/lance.test.js && node src/categories.test.js && node src/trades.test.js && node src/transcribeLocal.test.js && node src/search.test.js && node src/listingSocial.test.js && node src/chat.test.js && node src/official.test.js && node src/meli.test.js"
+    "test": "node src/config.test.js && node src/db.persist.test.js && node src/db.isolate.test.js && node src/db.clone.test.js && node src/appmax.test.js && node src/appmax.admin.test.js && node src/action.test.js && node src/lance.test.js && node src/categories.test.js && node src/trades.test.js && node src/transcribeLocal.test.js && node src/search.test.js && node src/listingSocial.test.js && node src/chat.test.js && node src/official.test.js && node src/meli.test.js && node src/orders.test.js && node src/orders.pix.test.js && node src/orders.card.test.js && node src/orders.webhook.test.js && node src/orders.homolog.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

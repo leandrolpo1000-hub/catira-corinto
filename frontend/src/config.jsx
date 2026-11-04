@@ -20,6 +20,7 @@ const emptyCfg = {
   assistantEnabled: false,
   auctionEnabled: false,
   auction: { flags: {}, enabled: false, settings: {} },
+  appmax: { scriptUrl: '', externalId: '', env: 'production' },
 };
 const Ctx = createContext(emptyCfg);
 
@@ -63,6 +64,7 @@ export function ConfigProvider({ children }) {
         auction: d.auction && d.auction.flags
           ? d.auction
           : { flags: {}, enabled: !!d.auctionEnabled, settings: {} },
+        appmax: d.appmax && d.appmax.scriptUrl ? d.appmax : { scriptUrl: '', externalId: '', env: 'production' },
       });
     }).catch(() => {});
   }, [loc.pathname]);

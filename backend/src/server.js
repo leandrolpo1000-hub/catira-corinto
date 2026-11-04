@@ -2,8 +2,6 @@ const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { seedIfEmpty, ensureExtras, ensureMaster } = require('./seed');
-const { authOptional } = require('./middleware');
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -25,11 +23,18 @@ function loadEnvFile(filePath) {
 loadEnvFile(path.join(__dirname, '..', '..', '.env'));
 loadEnvFile(path.join(__dirname, '..', '.env'));
 
+const { seedIfEmpty, ensureExtras, ensureMaster } = require('./seed');
+const { authOptional } = require('./middleware');
+const { assertRuntimeConfig } = require('./config');
+assertRuntimeConfig();
+
 seedIfEmpty();
 ensureExtras();
 ensureMaster();
+try { require('./db').ensureDailyBackup(); } catch {}
 try { require('./lance').ensureSettings(); } catch {}
 try { require('./official').ensureOfficialSeller(); } catch {}
+try { require('./official').ensureTestPixProduct(); } catch {}
 try { require('./auctions/editions').ensureEditions(); } catch {}
 
 const app = express();
@@ -98,6 +103,7 @@ app.get('/api/config', (_req, res) => {
     premiumFeeEnabled: premiumChargingEnabled(),
     homeBanner: publicBanner(),
     premiumBanner: publicPremiumBanner(),
+    appmax: require('./appmax').publicConfig(),
   });
 });
 
@@ -154,7 +160,11 @@ app.get('/api/meli/callback', async (req, res) => {
   }
 });
 
+const orderRoutes = require('./routes/orders');
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/orders', orderRoutes);
+app.use('/api/checkout', orderRoutes.checkout);
+app.use('/api/appmax/webhooks', require('./routes/appmaxWebhooks'));
 app.use('/api/listings', require('./routes/listings'));
 app.use('/api/auctions', require('./routes/auctions'));
 app.use('/api', require('./routes/social'));

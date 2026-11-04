@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const db = require('./db');
+const { resolveJwtSecret } = require('./config');
 
 const ADMIN_ROLES = ['admin', 'master'];
 
@@ -11,12 +12,14 @@ function isVipUser() {
   return false;
 }
 
-const JWT_SECRET = process.env.CATIRA_JWT_SECRET || 'catira-corinto-dev-secret-change-me';
+function getJwtSecret() {
+  return resolveJwtSecret();
+}
 
 function signToken(user) {
   return jwt.sign(
     { id: user.id, email: user.email, role: user.role },
-    JWT_SECRET,
+    getJwtSecret(),
     { expiresIn: '30d' }
   );
 }
@@ -84,7 +87,7 @@ function authOptional(req, _res, next) {
     return next();
   }
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = jwt.verify(token, getJwtSecret());
     const user = db.findById('users', payload.id);
     req.user = user && user.status !== 'blocked' ? user : null;
   } catch {
@@ -128,7 +131,10 @@ function emailVerifiedRequired(req, res, next) {
 }
 
 module.exports = {
-  JWT_SECRET,
+  get JWT_SECRET() {
+    return getJwtSecret();
+  },
+  getJwtSecret,
   signToken,
   publicUser,
   safeUser,

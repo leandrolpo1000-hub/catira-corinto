@@ -3,11 +3,14 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, money, reportReasons, typeLabel, priceText, formatBRLInput, parseBRL } from '../api';
 import { useAuth } from '../auth';
 import { conditionText, HomeAdBanner, officialLocation, Top } from '../components';
+import { useConfig } from '../config';
+import { loadAppmaxScript, initAppmaxScripts } from '../appmax';
 
 export default function Listing() {
   const { id } = useParams();
   const { user } = useAuth();
   const nav = useNavigate();
+  const cfg = useConfig();
   const [item, setItem] = useState(null);
   const [idx, setIdx] = useState(0);
   const [err, setErr] = useState('');
@@ -25,15 +28,43 @@ export default function Listing() {
   const [reviews, setReviews] = useState([]);
   const [stars, setStars] = useState(0);
   const [revComment, setRevComment] = useState('');
+  const [buyOpen, setBuyOpen] = useState(false);
+  const [buyErr, setBuyErr] = useState('');
+  const [buyBusy, setBuyBusy] = useState(false);
+  const [pixOrder, setPixOrder] = useState(null);
+  const [payerIp, setPayerIp] = useState('');
+  const [docNumber, setDocNumber] = useState('');
+  const [recipientName, setRecipientName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [cep, setCep] = useState('');
+  const [street, setStreet] = useState('');
+  const [number, setNumber] = useState('');
+  const [complement, setComplement] = useState('');
+  const [district, setDistrict] = useState('');
+  const [city, setCity] = useState('');
+  const [state, setState] = useState('MG');
+  const [cityId, setCityId] = useState('corinto');
 
   useEffect(() => {
     api('/api/listings/' + id).then((d) => {
       setItem(d);
       setStars(d.myRating || 0);
       setRevComment(d.myComment || '');
+      setCityId(d.cityId || 'corinto');
     }).catch((e) => setErr(e.message));
     api('/api/listings/' + id + '/reviews').then((d) => setReviews(d.items || [])).catch(() => setReviews([]));
   }, [id]);
+
+  const officialOffers = item && item.isOfficial && Array.isArray(item.officialOffers) ? item.officialOffers : [];
+  const catiraOffer = officialOffers.find((o) => o.provider === 'catira');
+  const externalOffers = officialOffers.filter((o) => o.provider !== 'catira');
+
+  useEffect(() => {
+    if (!(catiraOffer && catiraOffer.buyEnabled && cfg.appmax && cfg.appmax.externalId)) return;
+    loadAppmaxScript(cfg.appmax.scriptUrl)
+      .then(() => initAppmaxScripts({ externalId: cfg.appmax.externalId, onIp: setPayerIp }))
+      .catch((e) => setBuyErr(e.message));
+  }, [catiraOffer, cfg.appmax]);
 
   if (err && !item) {
     return <><Top back /><div className="page"><div className="error">{err}</div></div></>;
@@ -287,30 +318,164 @@ export default function Listing() {
           </Link>
         )}
 
-        {item.isOfficial && item.officialOffers && item.officialOffers.length > 0 && (
+        {item.isOfficial && officialOffers.length > 0 && (
           <div className="official-buy">
-            <strong>Onde comprar</strong>
-            <p className="hint official-note">A compra é feita fora do Catira, na plataforma escolhida.</p>
-            <div className="official-offers">
-              {item.officialOffers.map((o) => (
-                <a
-                  key={o.id}
-                  className={'btn official-offer provider-' + o.provider}
-                  href={o.url}
-                  target="_blank"
-                  rel="noopener noreferrer nofollow"
+            {catiraOffer && catiraOffer.buyEnabled && (
+              <div className="official-catira-buy">
+                {catiraOffer && catiraOffer.buyEnabled && cfg.appmax && cfg.appmax.externalId && (
+                  <form data-appmax-customer hidden />
+                )}
+                <strong>Oferta Catira</strong>
+                <button
+                  type="button"
+                  className="btn official-offer provider-catira"
+                  onClick={() => {
+                    if (!user) {
+                      nav('/entrar?next=' + encodeURIComponent(location.pathname));
+                      return;
+                    }
+                    setBuyOpen(true);
+                  }}
                 >
-                  <span>{o.providerLabel}</span>
-                  {!!o.price && (
-                    <em>
-                      {o.previousPrice && o.previousPrice > o.price ? <s>{money(o.previousPrice)}</s> : null}
-                      {money(o.price)}
-                    </em>
-                  )}
-                </a>
-              ))}
-            </div>
-            <p className="hint official-note">Preço e disponibilidade podem mudar até a finalização no site do parceiro.</p>
+                  <span>Comprar no Catira</span>
+                  {!!catiraOffer.price && <em>{money(catiraOffer.price)}</em>}
+                </button>
+                {buyErr && <div className="error">{buyErr}</div>}
+                {buyOpen && !pixOrder && (
+                  <form
+                    className="catira-buy-form"
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      setBuyErr('');
+                      if (!payerIp) {
+                        setBuyErr('Aguarde a verificação da Appmax (IP).');
+                        return;
+                      }
+                      setBuyBusy(true);
+                      try {
+                        const address = {
+                          recipientName,
+                          phone,
+                          cep,
+                          street,
+                          number,
+                          complement,
+                          district,
+                          city,
+                          state,
+                          cityId,
+                        };
+                        const created = await api('/api/orders', {
+                          method: 'POST',
+                          body: JSON.stringify({ offerId: catiraOffer.id, quantity: 1, address }),
+                        });
+                        const charged = await api('/api/orders/' + created.id + '/pix', {
+                          method: 'POST',
+                          body: JSON.stringify({ documentNumber: docNumber, ip: payerIp }),
+                        });
+                        setPixOrder(charged);
+                      } catch (ex) {
+                        setBuyErr(ex.message);
+                      }
+                      setBuyBusy(false);
+                    }}
+                  >
+                    <div className="field">
+                      <label>Destinatário</label>
+                      <input value={recipientName} onChange={(e) => setRecipientName(e.target.value)} required />
+                    </div>
+                    <div className="field">
+                      <label>Telefone</label>
+                      <input value={phone} onChange={(e) => setPhone(e.target.value)} required />
+                    </div>
+                    <div className="field">
+                      <label>CEP</label>
+                      <input value={cep} onChange={(e) => setCep(e.target.value)} required />
+                    </div>
+                    <div className="field">
+                      <label>Logradouro</label>
+                      <input value={street} onChange={(e) => setStreet(e.target.value)} required />
+                    </div>
+                    <div className="field">
+                      <label>Número</label>
+                      <input value={number} onChange={(e) => setNumber(e.target.value)} required />
+                    </div>
+                    <div className="field">
+                      <label>Complemento</label>
+                      <input value={complement} onChange={(e) => setComplement(e.target.value)} />
+                    </div>
+                    <div className="field">
+                      <label>Bairro</label>
+                      <input value={district} onChange={(e) => setDistrict(e.target.value)} required />
+                    </div>
+                    <div className="field">
+                      <label>Cidade</label>
+                      <input value={city} onChange={(e) => setCity(e.target.value)} required />
+                    </div>
+                    <div className="field">
+                      <label>UF</label>
+                      <input value={state} onChange={(e) => setState(e.target.value)} required />
+                    </div>
+                    <div className="field">
+                      <label>CPF/CNPJ</label>
+                      <input value={docNumber} onChange={(e) => setDocNumber(e.target.value)} required />
+                    </div>
+                    <button className="btn btn-primary" type="submit" disabled={buyBusy}>
+                      {buyBusy ? 'Gerando Pix...' : 'Gerar Pix'}
+                    </button>
+                  </form>
+                )}
+                {pixOrder && (
+                  <div className="catira-pix">
+                    {pixOrder.pixQrcode && (
+                      <img
+                        alt="QR Pix"
+                        src={pixOrder.pixQrcode.startsWith('data:') ? pixOrder.pixQrcode : ('data:image/png;base64,' + pixOrder.pixQrcode)}
+                      />
+                    )}
+                    <textarea readOnly value={pixOrder.pixEmv} />
+                    <p>Aguardando pagamento Pix.</p>
+                  </div>
+                )}
+              </div>
+            )}
+            {catiraOffer && !catiraOffer.buyEnabled && (
+              <div className="official-catira-prep">
+                <strong>Oferta Catira</strong>
+                <p className="hint official-note">Preço próprio da plataforma. Ainda não está disponível para compra.</p>
+                <div className="official-offer provider-catira official-offer-prep" role="status">
+                  <span>Oferta Catira</span>
+                  {!!catiraOffer.price && <em>{money(catiraOffer.price)}</em>}
+                </div>
+                <p className="hint official-note">Em preparação · compra pelo Catira ainda não está disponível.</p>
+              </div>
+            )}
+            {externalOffers.length > 0 && (
+              <>
+                <strong>Onde comprar</strong>
+                <p className="hint official-note">A compra é feita fora do Catira, na plataforma escolhida.</p>
+                <div className="official-offers">
+                  {externalOffers.map((o) => (
+                    <a
+                      key={o.id}
+                      className={'btn official-offer provider-' + o.provider}
+                      href={o.url}
+                      target="_blank"
+                      rel="noopener noreferrer nofollow"
+                    >
+                      <span>{o.providerLabel}</span>
+                      {!!o.price && (
+                        <em>
+                          {o.previousPrice && o.previousPrice > o.price ? <s>{money(o.previousPrice)}</s> : null}
+                          {money(o.price)}
+                        </em>
+                      )}
+                    </a>
+                  ))}
+                </div>
+                <p className="hint official-note">Preço e disponibilidade podem mudar até a finalização no site do parceiro.</p>
+              </>
+            )}
           </div>
         )}
         {item.isOfficial && (

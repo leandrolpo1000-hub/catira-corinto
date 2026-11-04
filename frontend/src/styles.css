@@ -2460,6 +2460,8 @@ html[data-theme="dark"] .chat-bubble.mine .chat-meta span { color: #a8d8c4; }
 .official-offer.provider-shopee { background: #ee4d2d; color: #fff; border-color: #ee4d2d; }
 .official-offer.provider-amazon { background: #ff9900; color: #111; border-color: #ff9900; }
 .official-offer.provider-catira { background: #1c140f; color: var(--gold); border-color: #1c140f; }
+.official-offer-prep { cursor: default; pointer-events: none; }
+.official-catira-prep { margin-bottom: 12px; }
 .official-note { margin-bottom: 0; font-size: 12px; }
 .meli-box { border: 1px solid #e5e7eb; padding: 12px; margin-bottom: 16px; border-radius: 12px; }
 .meli-box form { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
