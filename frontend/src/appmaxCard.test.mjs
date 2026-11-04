@@ -33,8 +33,8 @@ assert.equal(/api\(/.test(form), false, 'form não envia cartão ao backend');
 assert.equal(listing.includes('Comprar pelo Catira'), false, 'ficha sem Comprar pelo');
 assert.equal(listing.includes('AppmaxCardForm'), false, 'ficha sem form de cartão');
 assert.equal(listing.includes('data-appmax-checkout'), false, 'ficha sem checkout de cartão');
-assert.equal(listing.includes('data-appmax-customer'), true, 'ficha pede IP Appmax JS');
-assert.equal(app.includes('checkout'), false, 'sem rota pública de checkout');
+assert.equal(listing.includes('data-appmax-customer'), false, 'ficha sem IP Appmax JS');
+assert.equal(app.includes('/checkout'), true, 'rota pública de checkout');
 assert.equal(api.includes('card-number'), false, 'api.js sem PAN');
 assert.equal(api.includes('/v1/payments/tokenize'), false, 'api.js não tokeniza');
 

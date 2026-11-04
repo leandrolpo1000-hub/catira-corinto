@@ -190,7 +190,11 @@ function splitRecipientName(raw) {
 }
 
 function patchOrder(orderId, patch) {
-  return db.update('orders', orderId, { ...patch, updatedAt: nowIso() }, { allowOrderWrite: true });
+  const opts = { allowOrderWrite: true };
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'address')) {
+    opts.allowAddressUpdate = true;
+  }
+  return db.update('orders', orderId, { ...patch, updatedAt: nowIso() }, opts);
 }
 
 function pixFromResponse(raw) {
@@ -596,7 +600,13 @@ function createOrderTx(input) {
     if (existingKey) return getOrder(existingKey.id);
   }
   const open = findOpenOrder(userId, offerId);
-  if (open) return getOrder(open.id);
+  if (open) {
+    const address = validateAddress(input.address);
+    if (!open.pixEmv && !open.appmaxOrderId) {
+      patchOrder(open.id, { address });
+    }
+    return getOrder(open.id);
+  }
 
   const offer = catiraOfferOf(offerId);
   const product = official.productOf(offer.productId);
@@ -856,6 +866,12 @@ function serializeBuyerOrder(detail) {
     status: order.status,
     totalCents: order.totalCents,
     quantity: order.quantity,
+    unitPriceCents: order.unitPriceCents,
+    freightCents: order.freightCents || 0,
+    discountCents: order.discountCents || 0,
+    paymentMethod: order.paymentMethod || null,
+    listingId: order.listingId || null,
+    createdAt: order.createdAt || null,
     productSnapshot: { title: snap.title || '' },
     address: order.address || null,
     pixEmv: order.pixEmv || null,

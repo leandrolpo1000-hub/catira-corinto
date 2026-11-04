@@ -19,7 +19,7 @@ export function Layout({ children }) {
   const { auctionEnabled } = useConfig();
   const [menuOpen, setMenuOpen] = useState(false);
   const [unread, setUnread] = useState(0);
-  const hideNav = loc.pathname.startsWith('/admin') || loc.pathname.startsWith('/chat/');
+  const hideNav = loc.pathname.startsWith('/admin') || loc.pathname.startsWith('/chat/') || loc.pathname.startsWith('/checkout');
   const hideFoot = hideNav || loc.pathname === '/em-acao' || loc.pathname.startsWith('/buscar');
   const admin = loc.pathname.startsWith('/admin');
   const isAdmin = user && isAdminRole(user.role);

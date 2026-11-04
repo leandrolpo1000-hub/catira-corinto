@@ -254,6 +254,15 @@ async function run() {
     assert.ok(first.events.some((e) => e.type === 'order.created'));
     assert.strictEqual(first.order.leadTimeLabel, first.order.leadTimeLabel);
 
+    const buyerView = orders.serializeBuyerOrder(first);
+    assert.ok(buyerView.createdAt, 'serializeBuyerOrder inclui createdAt');
+    assert.strictEqual(buyerView.freightCents, 0);
+    assert.strictEqual(buyerView.discountCents, 0);
+    assert.strictEqual(buyerView.unitPriceCents, 13550);
+    assert.strictEqual(buyerView.listingId, first.order.listingId || null);
+    assert.ok(!('userId' in buyerView), 'serializeBuyerOrder omite userId');
+    assert.ok(!('appmaxOrderId' in buyerView), 'serializeBuyerOrder omite appmaxOrderId');
+
     official.updateProduct(created.product.id, { title: 'Título novo NÃO deve ir ao pedido' }, { id: seller.id });
     official.upsertOffer(created.product.id, { provider: 'catira', price: 999 }, { id: seller.id });
     const mutatedAddr = orders.validateAddress({ ...ADDRESS, street: 'Outra rua' });
@@ -356,6 +365,38 @@ async function run() {
       address: ADDRESS,
     });
     assert.strictEqual(openDup.order.id, first.order.id, 'draft aberto do mesmo user+oferta não duplica');
+
+    const reuseBuyer = extraBuyer(ids, 'Reuse Addr', 'reuse-addr@test.local');
+    const reuseFirst = orders.createOrder({
+      userId: reuseBuyer.id,
+      offerId: catira.offer.id,
+      quantity: 1,
+      address: ADDRESS,
+    });
+    ids.orders.push(reuseFirst.order.id);
+    ids.items.push(...reuseFirst.items.map((i) => i.id));
+    ids.events.push(...reuseFirst.events.map((e) => e.id));
+    const reuseSecond = orders.createOrder({
+      userId: reuseBuyer.id,
+      offerId: catira.offer.id,
+      quantity: 1,
+      address: { ...ADDRESS, street: 'Rua Nova Checkout', number: '200' },
+    });
+    assert.strictEqual(reuseSecond.order.id, reuseFirst.order.id, 'reusa draft sem Pix');
+    assert.strictEqual(reuseSecond.order.address.street, 'Rua Nova Checkout', 'endereço do POST entra no draft sem Pix');
+    assert.strictEqual(reuseSecond.order.address.number, '200');
+    assert.strictEqual(reuseSecond.order.unitPriceCents, reuseFirst.order.unitPriceCents, 'preço do snapshot não muda no reuso');
+    assert.strictEqual(reuseSecond.order.quantity, 1, 'quantidade do snapshot não muda no reuso');
+
+    db.update('orders', reuseFirst.order.id, { pixEmv: '000201...', appmaxOrderId: 99 }, { allowOrderWrite: true });
+    const reusePix = orders.createOrder({
+      userId: reuseBuyer.id,
+      offerId: catira.offer.id,
+      quantity: 1,
+      address: { ...ADDRESS, street: 'Nao Pode Mudar' },
+    });
+    assert.strictEqual(reusePix.order.id, reuseFirst.order.id);
+    assert.strictEqual(reusePix.order.address.street, 'Rua Nova Checkout', 'com Pix o endereço não muda');
 
     const parallel = [1, 2, 3].map(() =>
       orders.createOrder({
@@ -657,8 +698,22 @@ async function run() {
       assert.ok(openCreate.body.id);
       assert.ok(openCreate.body.productSnapshot);
       assert.strictEqual(openCreate.body.address.street, 'Rua das Flores');
+      assert.ok(openCreate.body.createdAt, 'HTTP serialize inclui createdAt');
+      assert.strictEqual(openCreate.body.freightCents, 0);
+      assert.strictEqual(openCreate.body.unitPriceCents, 13550);
       assert.ok(!('userId' in openCreate.body), 'comprador não vê userId cru se omitido no serialize');
+      assert.ok(!('appmaxOrderId' in openCreate.body), 'HTTP serialize omite appmaxOrderId');
       ids.orders.push(openCreate.body.id);
+
+      const reuseHttp = await jsonRequest(server, {
+        method: 'POST',
+        path: '/api/orders',
+        token: signToken(buyer),
+        body: { offerId: catira.offer.id, quantity: 1, address: { ...ADDRESS, street: 'Rua HTTP Nova' } },
+      });
+      assert.strictEqual(reuseHttp.status, 200, 'reuso HTTP do draft');
+      assert.strictEqual(reuseHttp.body.id, openCreate.body.id);
+      assert.strictEqual(reuseHttp.body.address.street, 'Rua HTTP Nova', 'POST reusa draft e grava endereço novo');
 
       const other = extraBuyer(ids, 'Outro', 'outro-buy@test.local');
       const stolen = await jsonRequest(server, {

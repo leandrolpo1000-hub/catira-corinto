@@ -18,6 +18,7 @@ import LanceHub, { LanceDetail, DealerApply, SellerLance } from './pages/LanceHu
 import OwnResale from './pages/OwnResale';
 import Auctions, { CreateAuction, AuctionDetail, MyAuctions, Watching, MyWins, AuctionPay, AuctionRanking, AuctionNotices } from './pages/Auction';
 import ActionFeed, { ActionCreate, ActionNotices } from './pages/Action';
+import Checkout from './pages/Checkout';
 
 export default function App() {
   return (
@@ -28,6 +29,12 @@ export default function App() {
         <Route path="/buscar/avisos" element={<SearchNotices />} />
         <Route path="/catiras" element={<Catiras />} />
         <Route path="/anuncio/:id" element={<Listing />} />
+        <Route path="/checkout/entrega" element={<Checkout />} />
+        <Route path="/checkout/:orderId/pagamento" element={<Checkout />} />
+        <Route path="/checkout/:orderId/pix" element={<Checkout />} />
+        <Route path="/checkout/:orderId/ok" element={<Checkout />} />
+        <Route path="/checkout/:orderId" element={<Checkout />} />
+        <Route path="/checkout" element={<Checkout />} />
         <Route path="/entrar" element={<Login />} />
         <Route path="/cadastro" element={<Register />} />
         <Route path="/confirmar-email" element={<VerifyEmail />} />

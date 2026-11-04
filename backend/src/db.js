@@ -347,6 +347,7 @@ function assertOrderPatch(table, patch, opts) {
   const keys = Object.keys(patch || {});
   if (table === 'orders') {
     for (let i = 0; i < keys.length; i++) {
+      if (keys[i] === 'address' && opts && opts.allowAddressUpdate) continue;
       if (ORDER_SNAPSHOT_KEYS.includes(keys[i])) {
         throw persistConflict('O snapshot do pedido é imutável.');
       }
