@@ -32,6 +32,8 @@ assert.equal(listing.includes('catiraOffer.buyEnabled'), true, 'botão respeita 
 assert.equal(listing.includes('AppmaxCardForm'), false, 'ficha sem form de cartão');
 assert.equal(listing.includes('/api/orders'), true, 'ficha cria pedido');
 assert.equal(listing.includes('/pix'), true, 'ficha gera Pix');
+assert.equal(listing.includes('onIp: setPayerIp'), false, 'ficha não grava objeto onIp');
+assert.equal(listing.includes('payload.ip'), true, 'ficha extrai ip do onIp');
 assert.equal(adminPage.includes("['pedidos', 'Pedidos']"), true, 'admin tem aba Pedidos');
 assert.equal(adminPage.includes('Compra pelo Catira ainda não está disponível'), true, 'aba Pedidos não sugere compra');
 assert.equal(adminPage.includes('Liberar compra'), false, 'admin geral sem liberar compra');

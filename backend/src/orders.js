@@ -51,6 +51,11 @@ function clip(raw, max) {
   return String(raw || '').trim().slice(0, max);
 }
 
+function ipOf(raw) {
+  if (raw && typeof raw === 'object' && raw.ip != null) return clip(raw.ip, 45);
+  return clip(raw, 45);
+}
+
 function validateAddress(raw) {
   const input = raw || {};
   const recipientName = clip(input.recipientName, 120);
@@ -306,7 +311,7 @@ function appmaxClientOf(opts) {
 async function preparePixCharge(orderId, input, opts) {
   rejectClientPrices(input);
   const documentNumber = digits(input && (input.documentNumber || input.document_number));
-  const ip = clip(input && input.ip, 45);
+  const ip = ipOf(input && input.ip);
   if (documentNumber.length !== 11 && documentNumber.length !== 14) {
     throw httpError(400, 'Informe o CPF ou CNPJ do pagador.');
   }
@@ -381,7 +386,7 @@ async function prepareCardCharge(orderId, input, opts) {
   rejectClientPrices(input);
   rejectCardSecrets(input);
   const documentNumber = digits(input && (input.documentNumber || input.document_number || input.holder_document_number));
-  const ip = clip(input && input.ip, 45);
+  const ip = ipOf(input && input.ip);
   const token = clip(input && input.token, 120);
   const holderName = clip(input && (input.holderName || input.holder_name), 120);
   const installments = installmentCount(input && input.installments);

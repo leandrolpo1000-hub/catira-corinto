@@ -188,6 +188,23 @@ async function run() {
     'IP obrigatório'
   );
 
+  const wrappedIpOrder = orders.createOrder({
+    userId: extraBuyer(ids, 'Bia Pix', 'bia-pix@test.local').id,
+    offerId: catira.offer.id,
+    quantity: 1,
+    address: ADDRESS,
+    idempotencyKey: 'pix-onip-object-1',
+  });
+  ids.orders.push(wrappedIpOrder.order.id);
+  ids.items.push(...wrappedIpOrder.items.map((i) => i.id));
+  const wrapAppmax = mockAppmax();
+  await orders.preparePixCharge(
+    wrappedIpOrder.order.id,
+    { documentNumber: '19100000000', ip: { ip: '187.0.0.1' } },
+    { appmax: wrapAppmax }
+  );
+  assert.strictEqual(wrapAppmax.calls.customer[0].ip, '187.0.0.1', 'onIp {ip} unwrap');
+
   const partial = orders.createOrder({
     userId: extraBuyer(ids, 'Ana Partial', 'ana-pix@test.local').id,
     offerId: catira.offer.id,

@@ -62,7 +62,13 @@ export default function Listing() {
   useEffect(() => {
     if (!(catiraOffer && catiraOffer.buyEnabled && cfg.appmax && cfg.appmax.externalId)) return;
     loadAppmaxScript(cfg.appmax.scriptUrl)
-      .then(() => initAppmaxScripts({ externalId: cfg.appmax.externalId, onIp: setPayerIp }))
+      .then(() => initAppmaxScripts({
+        externalId: cfg.appmax.externalId,
+        onIp: (payload) => {
+          const ip = payload && payload.ip ? payload.ip : payload;
+          setPayerIp(typeof ip === 'string' ? ip : '');
+        },
+      }))
       .catch((e) => setBuyErr(e.message));
   }, [catiraOffer, cfg.appmax]);
 
