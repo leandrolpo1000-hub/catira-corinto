@@ -67,6 +67,34 @@ router.post('/:id/pix', authRequired, async (req, res) => {
   }
 });
 
+router.get('/:id/installments', authRequired, async (req, res) => {
+  try {
+    const orders = require('../orders');
+    const detail = orders.getOrder(req.params.id);
+    asOwner(req, detail.order);
+    const quoted = await orders.quoteInstallments(req.params.id, {
+      installments: req.query.installments,
+    });
+    return res.json(quoted);
+  } catch (err) {
+    if (err && err.status === 404) return res.status(404).json({ error: 'Pedido não encontrado.' });
+    return sendErr(res, err);
+  }
+});
+
+router.post('/:id/card', authRequired, async (req, res) => {
+  try {
+    const orders = require('../orders');
+    const detail = orders.getOrder(req.params.id);
+    asOwner(req, detail.order);
+    const charged = await orders.prepareCardCharge(req.params.id, req.body || {});
+    return res.json(orders.serializeBuyerOrder(charged));
+  } catch (err) {
+    if (err && err.status === 404) return res.status(404).json({ error: 'Pedido não encontrado.' });
+    return sendErr(res, err);
+  }
+});
+
 const checkout = express.Router();
 checkout.post('/sessions', authRequired, denyPublic);
 checkout.get('/sessions/:id', authRequired, denyPublic);

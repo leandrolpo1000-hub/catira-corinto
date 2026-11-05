@@ -12,6 +12,7 @@ const { publicMailSettings, saveMailSettings, sendTestEmail } = require('../mail
 const { publicAssistantSettings, saveAssistantSettings } = require('../assistant');
 const { adminBanner, saveBannerSettings } = require('../banner');
 const { publicAppmaxSettings, saveAppmaxSettings, testAuth } = require('../appmax');
+const intelligence = require('../intelligence');
 
 const router = express.Router();
 router.use(adminRequired);
@@ -163,8 +164,10 @@ router.get('/dashboard', masterRequired, (req, res) => {
     })
     .sort((a, b) => b.count - a.count);
 
+  const category = (q.category || '').trim();
+  intelligence.ensureSettings();
   res.json({
-    filters: { period, city, status },
+    filters: { period, city, status, category },
     stats: {
       users: usersPeriod.length,
       usersTotal: users.length,
@@ -188,7 +191,16 @@ router.get('/dashboard', masterRequired, (req, res) => {
       listings: listingsByDay,
       topCategories,
     },
+    intelligence: intelligence.buildDashboard({ period, city, category }),
   });
+});
+
+router.get('/intelligence/settings', masterRequired, (_req, res) => {
+  res.json(require('../intelligence').getSettings());
+});
+
+router.put('/intelligence/settings', masterRequired, (req, res) => {
+  res.json(require('../intelligence').updateSettings(req.body || {}));
 });
 
 router.get('/users', (req, res) => {

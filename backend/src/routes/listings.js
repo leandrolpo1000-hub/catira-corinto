@@ -12,6 +12,7 @@ const { resolveCategory } = require('../categories');
 const { getSettings, listingFee, vipListingFee, commonChargingEnabled, vipChargingEnabled, premiumChargingEnabled, parsePremiumDays, quotePremium, premiumUntilIso, takenPremiumDays, premiumDayFee, brazilToday, weekdayOf, premiumRateForDate } = require('../pix');
 const QRCode = require('qrcode');
 const listingSocial = require('../listingSocial');
+const intelligence = require('../intelligence');
 
 function publicPayment(p) {
   if (!p) return null;
@@ -218,6 +219,19 @@ router.get('/', authOptional, (req, res) => {
     list = list.filter((l) => l.vip || l.premium || (l.featured && (!l.featuredUntil || new Date(l.featuredUntil).getTime() > Date.now())));
   }
   list = applyFilters(list, req.query);
+  if (searchText(req.query.q || req.query.search) && !editorial) {
+    const cat = req.query.category ? resolveCategory(req.query.category) : null;
+    intelligence.trackEvent({
+      type: 'search',
+      req,
+      user: req.user,
+      query: req.query.q || req.query.search,
+      resultCount: list.length,
+      city: req.query.city || null,
+      cityId: req.query.city || null,
+      categoryId: cat ? cat.id : null,
+    });
+  }
   const page = Math.max(1, parseInt(req.query.page || '1', 10));
   const limit = Math.min(48, Math.max(1, parseInt(req.query.limit || '24', 10)));
   const start = (page - 1) * limit;
@@ -447,6 +461,13 @@ router.delete('/:id/comments/:commentId', authRequired, (req, res) => {
   }
 });
 
+router.post('/:id/share', authOptional, (req, res) => {
+  const l = db.findById('listings', req.params.id);
+  if (!l || l.status !== 'published') return res.status(404).json({ error: 'Anúncio não encontrado.' });
+  intelligence.trackEvent({ type: 'share', req, user: req.user, listing: l });
+  res.json({ ok: true });
+});
+
 router.get('/:id', authOptional, (req, res) => {
   expireStalePayments();
   const l = db.findById('listings', req.params.id);
@@ -459,6 +480,7 @@ router.get('/:id', authOptional, (req, res) => {
   if (l.status === 'published') {
     db.update('listings', l.id, { views: (l.views || 0) + 1 });
     l.views = (l.views || 0) + 1;
+    intelligence.trackEvent({ type: 'view', req, user: req.user, listing: l });
   }
   const uid = req.user && req.user.id;
   res.json(serializeListing(l, { favorited: isFavorited(uid, l.id), userId: uid, user: req.user }));

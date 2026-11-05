@@ -35,6 +35,9 @@ try { require('./db').ensureDailyBackup(); } catch {}
 try { require('./lance').ensureSettings(); } catch {}
 try { require('./official').ensureOfficialSeller(); } catch {}
 try { require('./official').ensureTestPixProduct(); } catch {}
+try { require('./official').ensureSampleOfficialProducts(); } catch {}
+try { require('./intelligence').ensureSettings(); } catch {}
+try { require('./intelligence').ensureDemoEvents(); } catch {}
 try { require('./auctions/editions').ensureEditions(); } catch {}
 
 const app = express();
@@ -176,6 +179,13 @@ app.use('/api/admin', require('./routes/admin'));
 const lanceRoutes = require('./routes/lance');
 app.use('/api/lance', lanceRoutes.publicRouter);
 app.use('/api/admin/lance', lanceRoutes.adminRouter);
+
+app.get('/api/merchant/intelligence', require('./middleware').authRequired, (_req, res) => {
+  require('./intelligence').denyCommercial(res);
+});
+app.get('/api/intelligence/commercial', require('./middleware').authRequired, (_req, res) => {
+  require('./intelligence').denyCommercial(res);
+});
 
 const { runAuctionTicks } = require('./auctions/engine');
 const auctionTick = setInterval(() => {

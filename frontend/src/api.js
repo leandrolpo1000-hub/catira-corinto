@@ -1,4 +1,14 @@
 const TOKEN_KEY = 'catira_token';
+const SID_KEY = 'catira_sid';
+
+export function getSessionId() {
+  let sid = localStorage.getItem(SID_KEY);
+  if (!sid) {
+    sid = (crypto.randomUUID && crypto.randomUUID()) || String(Date.now()) + '-' + Math.random().toString(16).slice(2);
+    localStorage.setItem(SID_KEY, sid);
+  }
+  return sid;
+}
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
@@ -14,6 +24,7 @@ export async function api(path, opts = {}) {
   if (!(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json';
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
+  headers['X-Catira-Session'] = getSessionId();
   const res = await fetch(path, { ...opts, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Algo deu errado.');

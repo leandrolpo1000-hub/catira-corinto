@@ -101,6 +101,12 @@ function createTrade(user, body) {
     createdAt: now,
     updatedAt: now,
   });
+  require('./intelligence').trackEvent({
+    type: 'proposal',
+    user,
+    listing,
+    proposalId: proposal.id,
+  });
   return serializeTrade(proposal, user);
 }
 

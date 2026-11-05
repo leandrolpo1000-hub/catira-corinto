@@ -575,6 +575,48 @@ async function run() {
     cleanup(pixIds);
   }
 
+  const sampleIds = { products: [], offers: [] };
+  try {
+    assert.equal(typeof official.ensureSampleOfficialProducts, 'function', 'ensureSampleOfficialProducts exportada');
+    const first = official.ensureSampleOfficialProducts();
+    assert.strictEqual(first.items.length, 5, 'cinco oficiais');
+    const titles = first.items.map((row) => row.product.title).sort();
+    assert.deepStrictEqual(titles, [
+      'Boné trucker Corinto',
+      'Fone Bluetooth Catira',
+      'Kit chaves 40 peças',
+      'Luminária LED de mesa',
+      'Pulverizador 5 L',
+    ].sort());
+    first.items.forEach((row) => {
+      sampleIds.products.push(row.product.id);
+      sampleIds.offers.push(row.offer.id);
+      assert.strictEqual(row.offer.provider, 'catira');
+      assert.strictEqual(row.offer.buyEnabled, true);
+      assert.strictEqual(row.offer.commercialReady, false);
+      assert.strictEqual(row.offer.stock, 10);
+      assert.ok(row.product.published);
+      assert.strictEqual(row.product.cityId, 'corinto');
+      assert.ok(row.listing);
+    });
+    const fone = first.items.find((row) => row.product.title === 'Fone Bluetooth Catira');
+    assert.strictEqual(fone.offer.price, 49);
+    const second = official.ensureSampleOfficialProducts();
+    assert.strictEqual(second.items.length, 5);
+    assert.deepStrictEqual(
+      second.items.map((row) => row.product.id).sort(),
+      first.items.map((row) => row.product.id).sort(),
+      'idempotente por título'
+    );
+    assert.deepStrictEqual(
+      second.items.map((row) => row.offer.id).sort(),
+      first.items.map((row) => row.offer.id).sort(),
+      'oferta Catira reusada'
+    );
+  } finally {
+    cleanup(sampleIds);
+  }
+
   console.log('OK official tests');
 }
 

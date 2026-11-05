@@ -5,6 +5,7 @@ import { useAuth } from '../auth';
 import { NeedAuth, Top } from '../components';
 import { useConfig } from '../config';
 import { loadAppmaxScript, initAppmaxScripts } from '../appmax';
+import AppmaxCardForm from '../AppmaxCardForm';
 
 function checkoutPath(listingId, offerId) {
   return '/checkout?listing=' + encodeURIComponent(listingId || '') + '&offer=' + encodeURIComponent(offerId || '');
@@ -276,6 +277,10 @@ function Payment() {
   const [busy, setBusy] = useState(false);
   const [docNumber, setDocNumber] = useState('');
   const [payerIp, setPayerIp] = useState('');
+  const [method, setMethod] = useState('pix');
+  const [cardToken, setCardToken] = useState('');
+  const [installments, setInstallments] = useState(1);
+  const [installmentOpts, setInstallmentOpts] = useState([{ installment: 1 }]);
 
   useEffect(() => {
     if (!user || !orderId) return;
@@ -283,7 +288,17 @@ function Payment() {
   }, [user, orderId]);
 
   useEffect(() => {
-    if (!(cfg.appmax && cfg.appmax.externalId)) return undefined;
+    if (!user || !orderId || method !== 'card') return;
+    api('/api/orders/' + orderId + '/installments')
+      .then((d) => {
+        const rows = d && Array.isArray(d.installments) ? d.installments : [];
+        setInstallmentOpts(rows.length ? rows : [{ installment: 1 }]);
+      })
+      .catch(() => setInstallmentOpts([{ installment: 1 }]));
+  }, [user, orderId, method]);
+
+  useEffect(() => {
+    if (method !== 'pix' || !(cfg.appmax && cfg.appmax.externalId)) return undefined;
     let cancelled = false;
     loadAppmaxScript(cfg.appmax.scriptUrl)
       .then((sdk) => {
@@ -303,7 +318,7 @@ function Payment() {
       })
       .catch((e) => setErr(e.message));
     return () => { cancelled = true; };
-  }, [cfg.appmax]);
+  }, [cfg.appmax, method]);
 
   if (!user) return <NeedAuth next={next} />;
 
@@ -316,12 +331,33 @@ function Payment() {
     }
     setBusy(true);
     try {
-      const charged = await api('/api/orders/' + orderId + '/pix', {
-        method: 'POST',
-        body: JSON.stringify({ documentNumber: docNumber, ip: payerIp }),
-      });
-      setOrder(charged);
-      nav('/checkout/' + orderId + '/pix');
+      if (method === 'card') {
+        if (!cardToken) {
+          setErr('Preencha o cartão e aguarde a tokenização da Appmax.');
+          setBusy(false);
+          return;
+        }
+        const charged = await api('/api/orders/' + orderId + '/card', {
+          method: 'POST',
+          body: JSON.stringify({
+            token: cardToken,
+            documentNumber: docNumber,
+            ip: payerIp,
+            installments,
+          }),
+        });
+        setOrder(charged);
+        nav(charged.status === 'paid'
+          ? '/checkout/' + orderId + '/ok'
+          : '/checkout/' + orderId + '/aguardando');
+      } else {
+        const charged = await api('/api/orders/' + orderId + '/pix', {
+          method: 'POST',
+          body: JSON.stringify({ documentNumber: docNumber, ip: payerIp }),
+        });
+        setOrder(charged);
+        nav('/checkout/' + orderId + '/pix');
+      }
     } catch (ex) {
       setErr(ex.message);
     }
@@ -333,16 +369,44 @@ function Payment() {
       <Top back title="Escolha como deseja pagar" />
       <div className="page ck-page">
         <Steps current="pay" />
-        {cfg.appmax && cfg.appmax.externalId && <form data-appmax-customer hidden />}
+        {method === 'pix' && cfg.appmax && cfg.appmax.externalId && <form data-appmax-customer hidden />}
         {err && <div className="error">{err}</div>}
         {!order && !err && <p className="hint">Carregando...</p>}
         {order && (
           <form onSubmit={pay}>
-            <div className="ck-pay-pix">
-              <strong>Pix</strong>
-              <p className="hint">Pague à vista com o QR Code ou o código copia e cola. Confirmação pelo banco.</p>
-              <p className="ck-price">{centsMoney(order.totalCents)}</p>
+            <div className="ck-methods">
+              <button type="button" className={'ck-method' + (method === 'pix' ? ' on' : '')} onClick={() => setMethod('pix')}>Pix</button>
+              <button type="button" className={'ck-method' + (method === 'card' ? ' on' : '')} onClick={() => setMethod('card')}>Cartão</button>
             </div>
+            {method === 'pix' && (
+              <div className="ck-pay-pix">
+                <strong>Pix</strong>
+                <p className="hint">Pague à vista com o QR Code ou o código copia e cola. Confirmação pelo banco.</p>
+                <p className="ck-price">{centsMoney(order.totalCents)}</p>
+              </div>
+            )}
+            {method === 'card' && (
+              <>
+                <AppmaxCardForm
+                  visible
+                  externalId={cfg.appmax && cfg.appmax.externalId}
+                  scriptUrl={cfg.appmax && cfg.appmax.scriptUrl}
+                  onIp={(ip) => setPayerIp(typeof ip === 'string' ? ip : '')}
+                  onToken={(token) => setCardToken(token || '')}
+                  onError={(e) => setErr((e && e.message) || 'Falha no cartão.')}
+                />
+                <div className="field">
+                  <label>Parcelas</label>
+                  <select value={installments} onChange={(e) => setInstallments(Number(e.target.value) || 1)}>
+                    {installmentOpts.map((row) => (
+                      <option key={row.installment} value={row.installment}>
+                        {row.installment}x
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
             <div className="field">
               <label>CPF/CNPJ</label>
               <input value={docNumber} onChange={(e) => setDocNumber(e.target.value)} required inputMode="numeric" autoComplete="off" />
@@ -357,7 +421,7 @@ function Payment() {
             />
             <div className="ck-cta">
               <button className="btn btn-primary" type="submit" disabled={busy}>
-                {busy ? 'Gerando Pix...' : 'Pagar e finalizar'}
+                {busy ? (method === 'card' ? 'Processando...' : 'Gerando Pix...') : 'Pagar e finalizar'}
               </button>
             </div>
           </form>
@@ -437,6 +501,53 @@ function PixPay() {
   );
 }
 
+function WaitPay() {
+  const { user } = useAuth();
+  const { orderId } = useParams();
+  const nav = useNavigate();
+  const next = '/checkout/' + orderId + '/aguardando';
+  const [order, setOrder] = useState(null);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    if (!user || !orderId) return;
+    api('/api/orders/' + orderId).then(setOrder).catch((e) => setErr(e.message));
+  }, [user, orderId]);
+
+  useEffect(() => {
+    if (!order || !user) return undefined;
+    if (['paid', 'expired', 'failed', 'cancelled', 'completed', 'refunded'].includes(order.status)) return undefined;
+    const t = setInterval(() => {
+      api('/api/orders/' + orderId).then(setOrder).catch(() => {});
+    }, 8000);
+    return () => clearInterval(t);
+  }, [order && order.status, orderId, user]);
+
+  useEffect(() => {
+    if (order && order.status === 'paid') nav('/checkout/' + orderId + '/ok', { replace: true });
+  }, [order, orderId, nav]);
+
+  if (!user) return <NeedAuth next={next} />;
+
+  return (
+    <>
+      <Top back title="Aguardando confirmação" />
+      <div className="page ck-page">
+        <Steps current="pay" />
+        {err && <div className="error">{err}</div>}
+        {!order && !err && <p className="hint">Carregando...</p>}
+        {order && (
+          <div className="ck-pix">
+            <p className="ck-price">{centsMoney(order.totalCents)}</p>
+            <p className={'ck-pix-status status-' + order.status}>{pixStatusLabel(order.status)}</p>
+            <p className="hint">Pagamento com cartão enviado. A confirmação vem do banco. Não feche esta tela.</p>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 function Confirmed() {
   const { user } = useAuth();
   const { orderId } = useParams();
@@ -451,7 +562,10 @@ function Confirmed() {
 
   if (!user) return <NeedAuth next={next} />;
   if (order && order.status !== 'paid') {
-    return <Navigate to={'/checkout/' + orderId + '/pix'} replace />;
+    const wait = order.paymentMethod === 'credit_card'
+      ? '/checkout/' + orderId + '/aguardando'
+      : '/checkout/' + orderId + '/pix';
+    return <Navigate to={wait} replace />;
   }
 
   return (
@@ -467,7 +581,7 @@ function Confirmed() {
             <p className="lead">Seu pagamento foi confirmado! Agora estamos preparando os próximos passos para que seu pedido chegue até você.</p>
             <p className="hint">Pedido {order.id}</p>
             <p><strong>{order.productSnapshot && order.productSnapshot.title}</strong></p>
-            <p>{centsMoney(order.totalCents)} · Pix</p>
+            <p>{centsMoney(order.totalCents)} · {order.paymentMethod === 'credit_card' ? 'Cartão' : 'Pix'}</p>
             <p className="hint">{pixStatusLabel(order.status)}{order.createdAt ? ' · ' + new Date(order.createdAt).toLocaleString('pt-BR') : ''}</p>
             <Link className="btn btn-primary" to={'/checkout/' + order.id + '/ok'}>Ver meu pedido</Link>
             <div style={{ height: 10 }} />
@@ -484,6 +598,7 @@ export default function Checkout() {
   const params = useParams();
   const step = useMemo(() => {
     if (loc.pathname.endsWith('/ok')) return 'ok';
+    if (loc.pathname.endsWith('/aguardando')) return 'wait';
     if (loc.pathname.endsWith('/pix')) return 'pix';
     if (loc.pathname.endsWith('/pagamento')) return 'pay';
     if (loc.pathname.startsWith('/checkout/entrega')) return 'ship';
@@ -491,6 +606,7 @@ export default function Checkout() {
   }, [loc.pathname]);
 
   if (step === 'ok') return <Confirmed />;
+  if (step === 'wait') return <WaitPay />;
   if (step === 'pix') return <PixPay />;
   if (step === 'pay') return <Payment />;
   if (step === 'ship') return <Delivery />;

@@ -74,6 +74,7 @@ router.post('/favorites/:listingId', authRequired, (req, res) => {
     listingId: listing.id,
     createdAt: new Date().toISOString(),
   });
+  require('../intelligence').trackEvent({ type: 'favorite', req, user: req.user, listing });
   res.json({ favorited: true });
 });
 
@@ -130,6 +131,7 @@ router.post('/interest', authRequired, (req, res) => {
     read: false,
   });
   db.update('conversations', conv.id, { lastMessage: msg.text, lastAt: now });
+  require('../intelligence').trackEvent({ type: 'contact', req, user: req.user, listing });
   res.status(201).json({ conversationId: conv.id, message: msg });
 });
 
@@ -440,6 +442,7 @@ router.get('/whatsapp/:listingId', authRequired, (req, res) => {
   const text = encodeURIComponent(
     `Olá! Vi seu anúncio "${listing.title}" no CATIRA e tenho interesse.`
   );
+  require('../intelligence').trackEvent({ type: 'contact_whatsapp', req, user: req.user, listing });
   res.json({
     url: `https://wa.me/55${phone}?text=${text}`,
     phoneMasked: phone ? phone.replace(/(\d{2})(\d{4,5})(\d{4})/, '($1) *****-$3') : '',

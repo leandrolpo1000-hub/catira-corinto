@@ -4,25 +4,9 @@ import { api, money, statusLabel, formatBRLInput, parseBRL, listingTypes } from 
 import { useAuth, isAdminRole, isMasterRole } from '../auth';
 import { BrandLogo, Top } from '../components';
 import AdminAuctions from './AdminAuctions';
+import AdminIntelligence from './AdminIntelligence';
 import AdminLance from './AdminLance';
 import AdminOfficial from './AdminOfficial';
-
-function Bars({ data, valueKey, green }) {
-  const max = Math.max(1, ...data.map((d) => d[valueKey] || 0));
-  return (
-    <div>
-      <div className={'bars' + (green ? ' green' : '')}>
-        {data.map((d, i) => (
-          <div key={i} className="bar" style={{ height: ((d[valueKey] || 0) / max) * 100 + '%' }} />
-        ))}
-      </div>
-      <div className="bar-lab">
-        <span>{data[0] && (data[0].date || data[0].month || '')}</span>
-        <span>{data.at(-1) && (data.at(-1).date || data.at(-1).month || '')}</span>
-      </div>
-    </div>
-  );
-}
 
 export default function Admin() {
   const { user } = useAuth();
@@ -48,7 +32,7 @@ export default function Admin() {
   const [promos, setPromos] = useState([]);
   const [promoForm, setPromoForm] = useState({ code: '', discountPercent: '100', maxUses: '' });
   const [promoErr, setPromoErr] = useState('');
-  const [dashFilter, setDashFilter] = useState({ period: '7d', city: '', status: '' });
+  const [dashFilter, setDashFilter] = useState({ period: '7d', city: '', status: '', category: '' });
   const [dashCities, setDashCities] = useState([]);
   const [mail, setMail] = useState({ fromEmail: '', fromName: 'CATIRA', enabled: false, configured: false, apiKeySet: false, apiKeyHint: '', apiKey: '' });
   const [mailMsg, setMailMsg] = useState('');
@@ -153,12 +137,8 @@ export default function Admin() {
 
   useEffect(() => {
     if (!user || user.role !== 'master') return;
-    const qs = new URLSearchParams();
-    if (dashFilter.period) qs.set('period', dashFilter.period);
-    if (dashFilter.city) qs.set('city', dashFilter.city);
-    if (dashFilter.status) qs.set('status', dashFilter.status);
-    api('/api/admin/dashboard?' + qs.toString()).then(setDash).catch(() => {});
-  }, [user, dashFilter.period, dashFilter.city, dashFilter.status]);
+    api('/api/admin/dashboard?period=' + dashFilter.period + '&city=' + encodeURIComponent(dashFilter.city) + '&status=' + encodeURIComponent(dashFilter.status) + '&category=' + encodeURIComponent(dashFilter.category || '')).then(setDash).catch(() => {});
+  }, [user, dashFilter.period, dashFilter.city, dashFilter.status, dashFilter.category]);
 
   if (!user) return <Navigate to="/entrar?next=/admin" replace />;
   if (!isAdminRole(user.role)) return <Navigate to="/" replace />;
@@ -289,8 +269,6 @@ export default function Admin() {
     setCats(next.map((c, idx) => ({ ...c, order: idx + 1 })));
   }
 
-  const s = dash?.stats || {};
-
   function sortPubs(key) {
     setPubSort((prev) => ({
       key,
@@ -347,86 +325,22 @@ export default function Admin() {
         <div className="brand-center"><BrandLogo size="sm" /></div>
         <div className="chips">
           {(isMaster
-            ? [['dash', 'Dashboard'], ['pix', 'PIX'], ['appmax', 'Appmax'], ['mail', 'E-mail'], ['assist', 'Assistente'], ['leilao', 'Leilão'], ['lance', 'Oportunidades'], ['banner', 'Banner'], ['promo', 'Cupons'], ['pays', 'Pagamentos'], ['pedidos', 'Pedidos'], ['rel', 'Relatórios'], ['users', 'Usuários'], ['ads', 'Anúncios'], ['acao', 'Em Ação'], ['rep', 'Denúncias'], ['rev', 'Avaliações'], ['cat', 'Categorias'], ['oficial', 'Oficial']]
+            ? [['dash', 'Catira Intelligence'], ['pix', 'PIX'], ['appmax', 'Appmax'], ['mail', 'E-mail'], ['assist', 'Assistente'], ['leilao', 'Leilão'], ['lance', 'Oportunidades'], ['banner', 'Banner'], ['promo', 'Cupons'], ['pays', 'Pagamentos'], ['pedidos', 'Pedidos'], ['rel', 'Relatórios'], ['users', 'Usuários'], ['ads', 'Anúncios'], ['acao', 'Em Ação'], ['rep', 'Denúncias'], ['rev', 'Avaliações'], ['cat', 'Categorias'], ['oficial', 'Oficial']]
             : [['leilao', 'Leilão'], ['lance', 'Oportunidades'], ['promo', 'Cupons'], ['pays', 'Pagamentos'], ['pedidos', 'Pedidos'], ['rel', 'Relatórios'], ['users', 'Usuários'], ['ads', 'Anúncios'], ['acao', 'Em Ação'], ['rep', 'Denúncias'], ['rev', 'Avaliações'], ['cat', 'Categorias'], ['oficial', 'Oficial']]
           ).map(([k, l]) => (
             <button key={k} className={'chip' + (tab === k ? ' on' : '')} onClick={() => setTab(k)}>{l}</button>
           ))}
         </div>
 
-        {tab === 'dash' && isMaster && dash && (
-          <>
-            <div className="dash-filters">
-              <div className="field">
-                <label>Período</label>
-                <select value={dashFilter.period} onChange={(e) => setDashFilter({ ...dashFilter, period: e.target.value })}>
-                  <option value="7d">7 dias</option>
-                  <option value="30d">30 dias</option>
-                  <option value="month">Este mês</option>
-                  <option value="year">Este ano</option>
-                  <option value="all">Tudo</option>
-                </select>
-              </div>
-              <div className="field">
-                <label>Cidade</label>
-                <select value={dashFilter.city} onChange={(e) => setDashFilter({ ...dashFilter, city: e.target.value })}>
-                  <option value="">Todas</option>
-                  {dashCities.map((c) => (
-                    <option key={c.id || c.name} value={c.name}>{c.name}{c.state ? '/' + c.state : ''}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label>Status</label>
-                <select value={dashFilter.status} onChange={(e) => setDashFilter({ ...dashFilter, status: e.target.value })}>
-                  <option value="">Todos</option>
-                  <option value="published">Publicados</option>
-                  <option value="awaiting_payment">Aguardando pagamento</option>
-                  <option value="awaiting_confirmation">Aguardando confirmação</option>
-                  <option value="sold">Vendidos</option>
-                  <option value="traded">Trocados</option>
-                  <option value="negotiated">Negociados</option>
-                  <option value="paused">Pausados</option>
-                  <option value="expired">Expirados</option>
-                  <option value="cancelled">Encerrados</option>
-                </select>
-              </div>
-            </div>
-            <div className="admin-grid">
-              <div className="stat"><b>{s.usersTotal || s.users}</b><span>Usuários cadastrados</span></div>
-              <div className="stat"><b>{s.listingsTotal || s.listingsPublished}</b><span>Total de anúncios</span></div>
-              <div className="stat"><b>{s.listingsPublished}</b><span>Anúncios ativos</span></div>
-              <div className="stat"><b>{s.deals || s.sold}</b><span>Negociações</span></div>
-              <div className="stat"><b>{s.vipListings || 0}</b><span>Anúncios em destaque</span></div>
-              <div className="stat"><b>{money(s.revenue)}</b><span>Receita</span></div>
-              <div className="stat"><b>{s.reportsOpen}</b><span>Denúncias pendentes</span></div>
-              <div className="stat"><b>{s.views || 0}</b><span>Visualizações</span></div>
-            </div>
-            <div className="chart">
-              <strong>Receita diária (7 dias)</strong>
-              <Bars data={dash.charts.dailyRevenue} valueKey="revenue" />
-            </div>
-            <div className="chart">
-              <strong>Receita mensal</strong>
-              <Bars data={dash.charts.monthlyRevenue} valueKey="revenue" />
-            </div>
-            <div className="chart">
-              <strong>Novos usuários</strong>
-              <Bars data={dash.charts.newUsers} valueKey="count" green />
-            </div>
-            <div className="chart">
-              <strong>Quantidade de anúncios</strong>
-              <Bars data={dash.charts.listings} valueKey="count" green />
-            </div>
-            <div className="chart">
-              <strong>Categorias mais usadas</strong>
-              {(dash.charts.topCategories || []).map((c) => (
-                <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--line)' }}>
-                  <span>{c.name}</span><b>{c.count}</b>
-                </div>
-              ))}
-            </div>
-          </>
+        {tab === 'dash' && isMaster && (
+          <AdminIntelligence
+            dash={dash}
+            dashFilter={dashFilter}
+            setDashFilter={setDashFilter}
+            dashCities={dashCities}
+            cats={cats}
+            user={user}
+          />
         )}
 
         {tab === 'pix' && isMaster && (

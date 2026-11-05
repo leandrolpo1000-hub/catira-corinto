@@ -1,5 +1,7 @@
 const bcrypt = require('bcryptjs');
 const { randomUUID } = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const db = require('./db');
 const { CATEGORIES, ensureCategories } = require('./categories');
 
@@ -36,6 +38,11 @@ const CITY_NAMES = [
   'São Gonçalo do Abaeté',
   'Paineiras',
   'Biquinhas',
+  'Dores do Indaiá',
+  'Luz',
+  'Bom Despacho',
+  'Quartel Geral',
+  'Cedro do Abaeté',
 ];
 
 function citySlug(name) {
@@ -58,6 +65,554 @@ function daysAgo(n) {
 
 function daysFrom(iso, n) {
   return new Date(new Date(iso).getTime() + n * 86400000).toISOString();
+}
+
+function demoUserEmail(n) {
+  return 'demo.user.' + String(n).padStart(3, '0') + '@catira.local';
+}
+
+function demoDealerEmail(n) {
+  return 'demo.dealer.' + String(n).padStart(2, '0') + '@catira.local';
+}
+
+const DEMO_FIRST_NAMES = [
+  'Lucas', 'Fernanda', 'Rafael', 'Camila', 'Bruno', 'Juliana', 'Thiago', 'Patrícia',
+  'Gustavo', 'Aline', 'Felipe', 'Larissa', 'Rodrigo', 'Tatiane', 'Diego', 'Vanessa',
+  'Marcelo', 'Priscila', 'Eduardo', 'Renata', 'Leandro', 'Sabrina', 'André', 'Carla',
+];
+
+const DEMO_LAST_NAMES = [
+  'Oliveira', 'Santos', 'Almeida', 'Costa', 'Rodrigues', 'Carvalho', 'Pereira',
+  'Nascimento', 'Barbosa', 'Rocha', 'Mendes', 'Araujo', 'Castro', 'Fernandes', 'Moreira',
+];
+
+const PHOTO_QUERIES = {
+  veiculos: [
+    ['motorcycle,honda', 'motorcycle,side', 'motorcycle,wheel', 'motorcycle,garage'],
+    ['pickup,truck', 'pickup,side', 'pickup,interior', 'pickup,rural'],
+    ['bicycle,mountain', 'bicycle,side', 'bicycle,gear', 'bicycle,trail'],
+    ['scooter,moto', 'scooter,side', 'scooter,dashboard', 'scooter,street'],
+    ['car,sedan', 'car,side', 'car,interior', 'car,parked'],
+    ['tractor,farm', 'tractor,side', 'tractor,wheel', 'tractor,field'],
+    ['motorcycle,yamaha', 'motorcycle,tank', 'motorcycle,seat', 'motorcycle,road'],
+    ['van,utility', 'van,side', 'van,cargo', 'van,workshop'],
+    ['bicycle,caloi', 'bicycle,frame', 'bicycle,pedal', 'bicycle,city'],
+    ['motorcycle,cg', 'motorcycle,engine', 'motorcycle,helmet', 'motorcycle,dirt'],
+  ],
+  tecnologia: [
+    ['smartphone,iphone', 'smartphone,back', 'smartphone,screen', 'smartphone,desk'],
+    ['laptop,notebook', 'laptop,keyboard', 'laptop,side', 'laptop,office'],
+    ['television,smart', 'television,screen', 'television,stand', 'television,living'],
+    ['headphones,wireless', 'headphones,ear', 'headphones,case', 'headphones,desk'],
+    ['tablet,android', 'tablet,screen', 'tablet,back', 'tablet,sofa'],
+    ['camera,dslr', 'camera,lens', 'camera,side', 'camera,table'],
+    ['game,console', 'game,controller', 'game,box', 'game,tv'],
+    ['printer,office', 'printer,front', 'printer,paper', 'printer,desk'],
+    ['smartwatch,wearable', 'smartwatch,face', 'smartwatch,band', 'smartwatch,wrist'],
+    ['speaker,bluetooth', 'speaker,front', 'speaker,side', 'speaker,room'],
+  ],
+  'casa-moveis': [
+    ['sofa,living', 'sofa,side', 'sofa,cushion', 'sofa,room'],
+    ['refrigerator,kitchen', 'refrigerator,open', 'refrigerator,side', 'refrigerator,home'],
+    ['bed,wood', 'bed,side', 'bed,mattress', 'bed,bedroom'],
+    ['table,dining', 'table,top', 'table,legs', 'table,kitchen'],
+    ['wardrobe,closet', 'wardrobe,open', 'wardrobe,door', 'wardrobe,bedroom'],
+    ['fan,ceiling', 'fan,blades', 'fan,switch', 'fan,room'],
+    ['stove,gas', 'stove,burner', 'stove,oven', 'stove,kitchen'],
+    ['washer,laundry', 'washer,front', 'washer,drum', 'washer,room'],
+    ['chair,wood', 'chair,seat', 'chair,back', 'chair,dining'],
+    ['lamp,desk', 'lamp,shade', 'lamp,base', 'lamp,night'],
+  ],
+  moda: [
+    ['sneakers,shoes', 'sneakers,side', 'sneakers,sole', 'sneakers,floor'],
+    ['jacket,leather', 'jacket,collar', 'jacket,back', 'jacket,hanger'],
+    ['watch,wrist', 'watch,face', 'watch,band', 'watch,table'],
+    ['handbag,leather', 'handbag,handle', 'handbag,inside', 'handbag,chair'],
+    ['jeans,denim', 'jeans,pocket', 'jeans,fold', 'jeans,rack'],
+    ['hat,cap', 'hat,front', 'hat,side', 'hat,table'],
+    ['boots,work', 'boots,side', 'boots,sole', 'boots,floor'],
+    ['dress,casual', 'dress,fabric', 'dress,hanger', 'dress,mirror'],
+    ['belt,leather', 'belt,buckle', 'belt,strap', 'belt,table'],
+    ['sunglasses,style', 'sunglasses,lens', 'sunglasses,arm', 'sunglasses,case'],
+  ],
+  ferramentas: [
+    ['drill,power', 'drill,side', 'drill,bit', 'drill,toolbox'],
+    ['toolbox,metal', 'toolbox,open', 'toolbox,tools', 'toolbox,garage'],
+    ['welder,machine', 'welder,front', 'welder,cable', 'welder,workshop'],
+    ['saw,circular', 'saw,blade', 'saw,handle', 'saw,wood'],
+    ['wrench,set', 'wrench,close', 'wrench,case', 'wrench,bench'],
+    ['compressor,air', 'compressor,tank', 'compressor,hose', 'compressor,shop'],
+    ['ladder,aluminum', 'ladder,side', 'ladder,step', 'ladder,wall'],
+    ['grinder,angle', 'grinder,disc', 'grinder,handle', 'grinder,bench'],
+    ['hammer,claw', 'hammer,head', 'hammer,handle', 'hammer,nails'],
+    ['level,spirit', 'level,vial', 'level,side', 'level,wall'],
+  ],
+  agro: [
+    ['chainsaw,forest', 'chainsaw,bar', 'chainsaw,engine', 'chainsaw,wood'],
+    ['sprayer,farm', 'sprayer,tank', 'sprayer,nozzle', 'sprayer,field'],
+    ['fence,rural', 'fence,wire', 'fence,post', 'fence,pasture'],
+    ['irrigation,hose', 'irrigation,sprinkler', 'irrigation,pipe', 'irrigation,crop'],
+    ['wheelbarrow,garden', 'wheelbarrow,side', 'wheelbarrow,wheel', 'wheelbarrow,yard'],
+    ['seed,bag', 'seed,grain', 'seed,sack', 'seed,barn'],
+    ['hoe,tool', 'hoe,blade', 'hoe,handle', 'hoe,soil'],
+    ['pump,water', 'pump,front', 'pump,hose', 'pump,tank'],
+    ['saddle,horse', 'saddle,leather', 'saddle,side', 'saddle,stable'],
+    ['beehive,honey', 'beehive,box', 'beehive,frame', 'beehive,field'],
+  ],
+  animais: [
+    ['chicken,coop', 'chicken,feather', 'chicken,yard', 'chicken,rural'],
+    ['dog,pet', 'dog,face', 'dog,side', 'dog,yard'],
+    ['horse,farm', 'horse,mane', 'horse,saddle', 'horse,pasture'],
+    ['cow,cattle', 'cow,face', 'cow,side', 'cow,field'],
+    ['cat,pet', 'cat,face', 'cat,fur', 'cat,home'],
+    ['goat,farm', 'goat,face', 'goat,side', 'goat,pen'],
+    ['fish,aquarium', 'fish,tank', 'fish,water', 'fish,home'],
+    ['bird,cage', 'bird,feather', 'bird,perch', 'bird,room'],
+    ['pig,farm', 'pig,snout', 'pig,side', 'pig,pen'],
+    ['rabbit,pet', 'rabbit,ear', 'rabbit,fur', 'rabbit,hutch'],
+  ],
+  lazer: [
+    ['guitar,acoustic', 'guitar,neck', 'guitar,body', 'guitar,room'],
+    ['soccer,ball', 'soccer,leather', 'soccer,grass', 'soccer,field'],
+    ['fishing,rod', 'fishing,reel', 'fishing,lure', 'fishing,river'],
+    ['tent,camping', 'tent,inside', 'tent,pole', 'tent,forest'],
+    ['bicycle,sport', 'bicycle,wheel', 'bicycle,handle', 'bicycle,park'],
+    ['dumbbell,gym', 'dumbbell,weight', 'dumbbell,rack', 'dumbbell,floor'],
+    ['boardgame,table', 'boardgame,box', 'boardgame,pieces', 'boardgame,home'],
+    ['kayak,river', 'kayak,paddle', 'kayak,side', 'kayak,water'],
+    ['skateboard,deck', 'skateboard,wheels', 'skateboard,side', 'skateboard,street'],
+    ['book,stack', 'book,cover', 'book,pages', 'book,shelf'],
+  ],
+  imoveis: [
+    ['house,rural', 'house,facade', 'house,yard', 'house,street'],
+    ['apartment,building', 'apartment,room', 'apartment,kitchen', 'apartment,view'],
+    ['land,plot', 'land,fence', 'land,grass', 'land,road'],
+    ['kitnet,room', 'kitnet,kitchen', 'kitnet,bath', 'kitnet,door'],
+    ['warehouse,shed', 'warehouse,interior', 'warehouse,gate', 'warehouse,yard'],
+    ['farm,house', 'farm,porch', 'farm,field', 'farm,gate'],
+    ['store,front', 'store,interior', 'store,counter', 'store,street'],
+    ['garage,empty', 'garage,door', 'garage,floor', 'garage,house'],
+    ['cottage,brick', 'cottage,window', 'cottage,roof', 'cottage,garden'],
+    ['lot,urban', 'lot,corner', 'lot,soil', 'lot,neighborhood'],
+  ],
+  servicos: [
+    ['mechanic,workshop', 'mechanic,tools', 'mechanic,car', 'mechanic,garage'],
+    ['sewing,machine', 'sewing,fabric', 'sewing,thread', 'sewing,table'],
+    ['painting,wall', 'painting,brush', 'painting,bucket', 'painting,room'],
+    ['cleaning,service', 'cleaning,bucket', 'cleaning,mop', 'cleaning,floor'],
+    ['barber,shop', 'barber,chair', 'barber,tools', 'barber,mirror'],
+    ['delivery,box', 'delivery,motorcycle', 'delivery,package', 'delivery,street'],
+    ['electrician,wires', 'electrician,panel', 'electrician,tool', 'electrician,wall'],
+    ['mason,brick', 'mason,trowel', 'mason,wall', 'mason,site'],
+    ['tutor,desk', 'tutor,book', 'tutor,notebook', 'tutor,room'],
+    ['catering,food', 'catering,tray', 'catering,kitchen', 'catering,table'],
+  ],
+};
+
+const TITLES = {
+  veiculos: [
+    ['Honda CG 150 Fan', 'Moto', 9800],
+    ['Saveiro 2012 cabine simples', 'Carros', 26500],
+    ['Bicicleta Caloi aro 29', 'Ciclismo', 920],
+    ['Honda Biz 125', 'Motos', 7200],
+    ['Gol 1.0 2010', 'Carros', 18800],
+    ['Microtrator tobata', 'Máquinas', 14500],
+    ['Yamaha Factor 125', 'Motos', 8100],
+    ['Kombi furgão 2008', 'Utilitários', 22000],
+    ['Monark barra circular', 'Ciclismo', 380],
+    ['Honda NXR 160 Bros', 'Motos', 12900],
+  ],
+  tecnologia: [
+    ['iPhone 11 64GB', 'iPhone', 1450],
+    ['Notebook Lenovo i5', 'Informática', 1680],
+    ['Smart TV 43 Samsung', 'TVs', 980],
+    ['Fone JBL Tune', 'Áudio', 180],
+    ['Tablet Samsung A8', 'Tablets', 720],
+    ['Câmera Canon T6', 'Câmeras', 1100],
+    ['Xbox One 500GB', 'Consoles', 890],
+    ['Impressora HP Ink Tank', 'Informática', 420],
+    ['Relógio Amazfit', 'Wearables', 260],
+    ['Caixa JBL Go', 'Áudio', 140],
+  ],
+  'casa-moveis': [
+    ['Sofá 3 lugares suede', 'Sofás', 690],
+    ['Geladeira Consul frost free', 'Eletro', 980],
+    ['Cama box casal', 'Camas', 540],
+    ['Mesa 6 cadeiras', 'Mesas', 480],
+    ['Guarda-roupa 6 portas', 'Armários', 820],
+    ['Ventilador de teto', 'Eletro', 160],
+    ['Fogão 5 bocas', 'Eletro', 540],
+    ['Máquina de lavar 11kg', 'Eletro', 780],
+    ['Jogo de cadeiras madeira', 'Cadeiras', 320],
+    ['Abajur de mesa', 'Iluminação', 70],
+  ],
+  moda: [
+    ['Tênis Olympikus n° 41', 'Calçados', 90],
+    ['Jaqueta de couro M', 'Roupas', 220],
+    ['Relógio Casio', 'Acessórios', 180],
+    ['Bolsa de couro', 'Bolsas', 130],
+    ['Calça jeans 42', 'Roupas', 80],
+    ['Boné trucker', 'Acessórios', 35],
+    ['Bota de trabalho 40', 'Calçados', 160],
+    ['Vestido midi', 'Roupas', 75],
+    ['Cinto de couro', 'Acessórios', 45],
+    ['Óculos escuros', 'Acessórios', 55],
+  ],
+  ferramentas: [
+    ['Furadeira de impacto 650W', 'Furadeiras', 280],
+    ['Caixa de ferramentas completa', 'Manuais', 190],
+    ['Máquina de solda 180A', 'Solda', 720],
+    ['Serra circular 7.1/4', 'Serras', 340],
+    ['Jogo de chaves combinadas', 'Manuais', 85],
+    ['Compressor 50 litros', 'Ar', 890],
+    ['Escada alumínio 6 degraus', 'Escadas', 210],
+    ['Esmerilhadeira 4.1/2', 'Elétricas', 230],
+    ['Martelo unha 27mm', 'Manuais', 35],
+    ['Nível de alumínio 60cm', 'Medição', 40],
+  ],
+  agro: [
+    ['Motosserra 50cc', 'Roçadeiras', 890],
+    ['Pulverizador 20 litros', 'Pulverização', 160],
+    ['Tela de alambrado 50m', 'Cercas', 420],
+    ['Aspersor de irrigação', 'Irrigação', 95],
+    ['Carrinho de mão reforçado', 'Jardinagem', 180],
+    ['Saco de milho 60kg', 'Grãos', 85],
+    ['Enxada e cavadeira', 'Manuais', 55],
+    ['Bomba d\'água 1cv', 'Bombas', 480],
+    ['Sela de cavalo', 'Equinos', 650],
+    ['Caixa de abelha completa', 'Apicultura', 220],
+  ],
+  animais: [
+    ['Galinha caipira (par)', 'Aves', 60],
+    ['Filhote de vira-lata', 'Cães', 80],
+    ['Égua mansa', 'Equinos', 1800],
+    ['Bezerro desmamado', 'Bovinos', 2200],
+    ['Gato persa adulto', 'Gatos', 250],
+    ['Cabra leiteira', 'Caprinos', 480],
+    ['Aquário 60 litros', 'Peixes', 180],
+    ['Calopsita com gaiola', 'Aves', 220],
+    ['Leitão caipira', 'Suínos', 320],
+    ['Casal de coelhos', 'Pequenos', 90],
+  ],
+  lazer: [
+    ['Violão Giannini', 'Música', 280],
+    ['Bola de campo Penalty', 'Futebol', 55],
+    ['Vara de pesca 2,10m', 'Pesca', 90],
+    ['Barraca 4 pessoas', 'Camping', 240],
+    ['Patins inline 40', 'Esportes', 160],
+    ['Kit halter 10kg', 'Musculação', 140],
+    ['Jogo Banco Imobiliário', 'Jogos', 45],
+    ['Caiaque individual', 'Náutico', 890],
+    ['Skate street', 'Esportes', 180],
+    ['Lote de livros didáticos', 'Livros', 40],
+  ],
+  imoveis: [
+    ['Casa 2 quartos no Centro', 'Casas', 95000],
+    ['Apartamento 1 quarto', 'Apartamentos', 78000],
+    ['Terreno 300m²', 'Terrenos', 35000],
+    ['Kitnet mobiliada', 'Kitnets', 42000],
+    ['Galpão 80m²', 'Comercial', 65000],
+    ['Chácara 1 hectare', 'Rurais', 120000],
+    ['Ponto comercial rua principal', 'Comercial', 88000],
+    ['Garagem coberta', 'Vagas', 18000],
+    ['Casa de fundo alvenaria', 'Casas', 62000],
+    ['Lote em condomínio', 'Terrenos', 28000],
+  ],
+  servicos: [
+    ['Mecânico em domicílio', 'Reparos', 120],
+    ['Costureira sob medida', 'Confecção', 80],
+    ['Pintura residencial', 'Reforma', 200],
+    ['Diária de limpeza', 'Doméstico', 140],
+    ['Corte e barba', 'Beleza', 40],
+    ['Entrega na cidade', 'Fretes', 50],
+    ['Eletricista residencial', 'Reparos', 150],
+    ['Pedreiro para muro', 'Reforma', 250],
+    ['Aula particular de matemática', 'Aulas', 60],
+    ['Marmitex no almoço', 'Alimentação', 18],
+  ],
+};
+
+const HEAVY_CATALOG = [];
+CATEGORIES.forEach((c) => {
+  const titles = TITLES[c.slug];
+  const queries = PHOTO_QUERIES[c.slug];
+  titles.forEach((row, i) => {
+    HEAVY_CATALOG.push({
+      slug: c.slug,
+      title: row[0],
+      subcategory: row[1],
+      price: row[2],
+      description:
+        row[0] + ' em bom estado, combinamos em ' +
+        (i % 2 === 0 ? 'Corinto e região' : 'a cidade do anúncio') +
+        '. Retirada ou entrega a combinar. ' +
+        (i % 3 === 0 ? 'Documentação em dia.' : i % 3 === 1 ? 'Pouco uso, bem cuidado.' : 'Preço negociável à vista.'),
+      photoQueries: queries[i],
+    });
+  });
+});
+
+function demoUploadsDir() {
+  return path.join(__dirname, '..', 'uploads', 'demo');
+}
+
+function ensureDemoPhoto(fileName, query) {
+  if (process.env.CATIRA_DEMO_PHOTOS === 'stub') {
+    return {
+      url: '/api/placeholder/demo/0?c=' + encodeURIComponent('#E85D04') + '&t=' + encodeURIComponent(String(query || 'CATIRA').slice(0, 28)),
+      local: false,
+    };
+  }
+  const dir = demoUploadsDir();
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const dest = path.join(dir, fileName);
+  if (fs.existsSync(dest) && fs.statSync(dest).size > 1024) {
+    return { url: '/uploads/demo/' + fileName, local: true };
+  }
+  return downloadUnsplash(dest, query, fileName);
+}
+
+let unsplashDisabled = false;
+
+function placeholderPhoto(query) {
+  return {
+    url: '/api/placeholder/demo/0?c=' + encodeURIComponent('#E85D04') + '&t=' + encodeURIComponent(String(query || 'CATIRA').slice(0, 28)),
+    local: false,
+  };
+}
+
+function downloadUnsplash(dest, query, fileName) {
+  if (unsplashDisabled) return placeholderPhoto(query);
+  const encoded = encodeURIComponent(String(query || 'product'));
+  const urls = [
+    'https://source.unsplash.com/800x600/?' + encoded,
+    'https://images.unsplash.com/featured/800x600/?' + encoded,
+  ];
+  try {
+    const { execFileSync } = require('child_process');
+    const tmp = dest + '.part';
+    let ok = false;
+    for (const url of urls) {
+      try {
+        execFileSync('curl', ['-fsSL', '-A', 'CatiraDemoSeed/1.0', '--max-time', '8', '-o', tmp, url], { stdio: 'ignore' });
+        if (fs.existsSync(tmp) && fs.statSync(tmp).size > 1024) {
+          fs.renameSync(tmp, dest);
+          ok = true;
+          break;
+        }
+      } catch {
+        /* try next url */
+      }
+    }
+    if (ok) return { url: '/uploads/demo/' + fileName, local: true };
+  } catch {
+    /* fall through */
+  }
+  unsplashDisabled = true;
+  return placeholderPhoto(query);
+}
+
+function demoName(index) {
+  const first = DEMO_FIRST_NAMES[index % DEMO_FIRST_NAMES.length];
+  const last = DEMO_LAST_NAMES[Math.floor(index / DEMO_FIRST_NAMES.length) % DEMO_LAST_NAMES.length];
+  return first + ' ' + last;
+}
+
+function demoPhone(prefix, index) {
+  return prefix + String(1000000 + index).slice(-7);
+}
+
+function listingTypeOfIndex(i) {
+  if (i < 70) return 'venda';
+  if (i < 85) return 'venda_troca';
+  if (i < 95) return 'troca';
+  return 'procuro';
+}
+
+function conditionOfIndex(i) {
+  return ['usado', 'seminovo', 'novo'][i % 3];
+}
+
+function ensureHeavyDemo() {
+  ensureCities();
+  ensureCategories();
+  const demoUsers = db.findWhere('users', (u) => /^demo\.user\.\d{3}@catira\.local$/.test(u.email || ''));
+  const heavyListings = db.findWhere('listings', (l) => l.source === 'demo-heavy');
+  if (demoUsers.length >= 100 && heavyListings.length >= 100) return { skipped: true };
+
+  const hash = bcrypt.hashSync('123456', 10);
+  const now = new Date().toISOString();
+  const master = db.findOne('users', (u) => u.role === 'master');
+  const catRows = db.all('categories').filter((c) => c.active !== false);
+
+  function cityOf(index) {
+    return CITIES[index % CITIES.length];
+  }
+
+  const colors = ['#E85D04', '#2D6A4F', '#1D3557', '#9B2226', '#7B2D8E', '#1E3A8A'];
+
+  for (let n = 1; n <= 100; n++) {
+    const email = demoUserEmail(n);
+    if (db.findOne('users', (u) => u.email === email)) continue;
+    const city = cityOf(n - 1);
+    db.insert('users', {
+      name: demoName(n - 1),
+      email,
+      phone: demoPhone('3899', n),
+      city: city.name,
+      cityId: city.id,
+      passwordHash: hash,
+      role: 'user',
+      status: 'active',
+      phoneVerified: true,
+      emailVerified: true,
+      createdAt: daysAgo(30 - (n % 25)),
+      ratingAvg: 4 + ((n % 10) / 10),
+      ratingCount: n % 8,
+      avatarColor: colors[n % colors.length],
+    });
+  }
+
+  for (let n = 1; n <= 10; n++) {
+    const email = demoDealerEmail(n);
+    let user = db.findOne('users', (u) => u.email === email);
+    const city = cityOf(n + 3);
+    if (!user) {
+      user = db.insert('users', {
+        name: demoName(200 + n),
+        email,
+        phone: demoPhone('3888', n),
+        city: city.name,
+        cityId: city.id,
+        passwordHash: hash,
+        role: 'user',
+        status: 'active',
+        phoneVerified: true,
+        emailVerified: true,
+        createdAt: daysAgo(40 - n),
+        ratingAvg: 4.6,
+        ratingCount: 4 + n,
+        avatarColor: colors[n % colors.length],
+      });
+    }
+    let app = db.findOne('dealerApplications', (a) => a.userId === user.id);
+    const catA = catRows[n % catRows.length];
+    const catB = catRows[(n + 3) % catRows.length];
+    const neighbor = CITIES[(n + 4) % CITIES.length];
+    const categories = [catA && catA.id, catB && catB.id].filter(Boolean);
+    const regions = [user.city, neighbor.name];
+    if (!app) {
+      app = db.insert('dealerApplications', {
+        userId: user.id,
+        name: user.name,
+        city: user.city,
+        cityId: user.cityId,
+        phone: user.phone,
+        categories,
+        regions,
+        termsAcceptedAt: now,
+        termsVersion: '1',
+        status: 'approved',
+        createdAt: now,
+        reviewedAt: now,
+        reviewedBy: master ? master.id : null,
+        note: 'demo-heavy',
+      });
+    } else if (app.status !== 'approved') {
+      db.update('dealerApplications', app.id, {
+        status: 'approved',
+        reviewedAt: now,
+        reviewedBy: master ? master.id : null,
+      });
+    }
+    let profile = db.findOne('dealerProfiles', (p) => p.userId === user.id);
+    if (!profile) {
+      db.insert('dealerProfiles', {
+        userId: user.id,
+        applicationId: app.id,
+        status: 'active',
+        founder: false,
+        founderAt: null,
+        categories,
+        regions,
+        city: user.city,
+        cityId: user.cityId,
+        phone: user.phone,
+        approvedAt: now,
+        approvedBy: master ? master.id : null,
+        benefitUntil: null,
+        couponCode: '',
+      });
+    } else if (profile.status !== 'active') {
+      db.update('dealerProfiles', profile.id, { status: 'active', approvedAt: now });
+    }
+  }
+
+  const existingHeavy = db.findWhere('listings', (l) => l.source === 'demo-heavy');
+  if (existingHeavy.length < 100) {
+    const haveTitle = {};
+    existingHeavy.forEach((l) => { haveTitle[l.title + '|' + l.userId] = true; });
+    HEAVY_CATALOG.forEach((item, i) => {
+      const ownerEmail = i < 40 ? demoDealerEmail(Math.floor(i / 4) + 1) : demoUserEmail(i - 39);
+      const owner = db.findOne('users', (u) => u.email === ownerEmail);
+      const cat = db.findOne('categories', (c) => c.slug === item.slug);
+      if (!owner || !cat) return;
+      if (haveTitle[item.title + '|' + owner.id]) return;
+      const listingType = listingTypeOfIndex(i);
+      const createdAt = daysAgo((i % 25) + 1);
+      const listing = db.insert('listings', {
+        userId: owner.id,
+        title: item.title,
+        description: item.description,
+        categoryId: cat.id,
+        subcategory: item.subcategory,
+        price: item.price,
+        condition: conditionOfIndex(i),
+        city: owner.city,
+        cityId: owner.cityId,
+        neighborhood: i % 2 === 0 ? 'Centro' : 'São João',
+        listingType,
+        acceptsTrade: listingType === 'troca' || listingType === 'venda_troca',
+        acceptsCash: listingType !== 'troca',
+        tradeWishes: listingType === 'venda' ? '' : 'Aceito volta ou item da mesma categoria.',
+        status: 'published',
+        featured: false,
+        vip: false,
+        views: 3 + (i * 7) % 78,
+        source: 'demo-heavy',
+        createdAt,
+        publishedAt: createdAt,
+        expiresAt: daysFrom(createdAt, LISTING_DAYS),
+        paidAt: createdAt,
+      });
+      item.photoQueries.forEach((q, idx) => {
+        const fileName = 'demo-' + item.slug + '-' + String(i).padStart(3, '0') + '-' + idx + '.jpg';
+        const photo = ensureDemoPhoto(fileName, q);
+        db.insert('listingImages', {
+          listingId: listing.id,
+          url: photo.local ? photo.url : `/api/placeholder/${listing.id}/${idx}?c=${encodeURIComponent('#E85D04')}&t=${encodeURIComponent(item.title.slice(0, 28))}`,
+          color: '#E85D04',
+          label: item.title.slice(0, 28),
+          emoji: item.subcategory.slice(0, 8).toUpperCase(),
+          order: idx,
+        });
+      });
+      db.insert('payments', {
+        userId: owner.id,
+        listingId: listing.id,
+        amount: LISTING_FEE,
+        status: 'paid',
+        method: 'pix',
+        kind: 'listing',
+        transactionId: 'PIX-DEMO-HEAVY-' + listing.id.slice(0, 8).toUpperCase(),
+        pixCode: '00020126580014br.gov.bcb.pix',
+        createdAt,
+        paidAt: createdAt,
+      });
+    });
+  }
+
+  return { skipped: false };
 }
 
 function seedIfEmpty() {
@@ -941,6 +1496,7 @@ function ensureExtras() {
   ensureSundayDemo();
   ensureActionDemo();
   ensureChatDemo();
+  ensureHeavyDemo();
   try { require('./lance').ensureSettings(); } catch {}
 }
 
@@ -1102,4 +1658,21 @@ function ensureChatDemo() {
   });
 }
 
-module.exports = { seedIfEmpty, ensureExtras, ensureCities, ensureMaster, LISTING_FEE, LISTING_DAYS, CITIES, CITY_NAMES, CATEGORIES };
+module.exports = {
+  seedIfEmpty,
+  ensureExtras,
+  ensureCities,
+  ensureMaster,
+  ensureHeavyDemo,
+  ensureDemoPhoto,
+  demoUserEmail,
+  demoDealerEmail,
+  HEAVY_CATALOG,
+  DEMO_FIRST_NAMES,
+  DEMO_LAST_NAMES,
+  LISTING_FEE,
+  LISTING_DAYS,
+  CITIES,
+  CITY_NAMES,
+  CATEGORIES,
+};

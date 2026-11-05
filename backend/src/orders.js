@@ -370,7 +370,17 @@ async function preparePixCharge(orderId, input, opts) {
       source: 'appmax',
     });
   }
-  return getOrder(orderId);
+  const charged = getOrder(orderId);
+  if (charged.order && (charged.order.pixEmv || charged.order.appmaxPaymentId)) {
+    const listing = charged.order.listingId ? db.findById('listings', charged.order.listingId) : null;
+    require('./intelligence').trackEvent({
+      type: 'checkout',
+      user: db.findById('users', charged.order.userId),
+      listing,
+      order: charged.order,
+    });
+  }
+  return charged;
 }
 
 async function quoteInstallments(orderId, input, opts) {
@@ -407,7 +417,7 @@ async function prepareCardCharge(orderId, input, opts) {
   if (!['draft', 'awaiting_payment'].includes(order.status)) {
     throw httpError(409, 'Pedido não aceita nova cobrança de cartão.');
   }
-  if (order.paymentMethod === 'pix' && order.pixEmv) {
+  if (order.pixEmv) {
     throw httpError(409, 'Pedido com Pix não aceita cobrança de cartão.');
   }
   if (order.appmaxPaymentId && order.appmaxOrderId) {
@@ -463,7 +473,17 @@ async function prepareCardCharge(orderId, input, opts) {
       source: 'appmax',
     });
   }
-  return getOrder(orderId);
+  const charged = getOrder(orderId);
+  if (charged.order && (charged.order.pixEmv || charged.order.appmaxPaymentId)) {
+    const listing = charged.order.listingId ? db.findById('listings', charged.order.listingId) : null;
+    require('./intelligence').trackEvent({
+      type: 'checkout',
+      user: db.findById('users', charged.order.userId),
+      listing,
+      order: charged.order,
+    });
+  }
+  return charged;
 }
 
 function extractAppmaxOrderId(payload) {
@@ -555,6 +575,13 @@ async function handleAppmaxWebhook(payload, opts) {
             remoteStatus: remote.status,
             paidValue: remotePaidCents(remote),
           },
+        });
+        const listing = moved.order.listingId ? db.findById('listings', moved.order.listingId) : null;
+        require('./intelligence').trackEvent({
+          type: 'payment_confirmed',
+          user: db.findById('users', moved.order.userId),
+          listing,
+          order: moved.order,
         });
         return { confirmed: true, order: moved.order };
       }
@@ -696,7 +723,18 @@ function createOrderTx(input) {
 }
 
 function createOrder(input) {
-  return db.batch(() => createOrderTx(input));
+  const out = db.batch(() => createOrderTx(input));
+  const order = out && out.order;
+  if (order) {
+    const listing = order.listingId ? db.findById('listings', order.listingId) : null;
+    require('./intelligence').trackEvent({
+      type: 'order_created',
+      user: db.findById('users', order.userId),
+      listing,
+      order,
+    });
+  }
+  return out;
 }
 
 function createCheckoutSession(input) {
@@ -787,6 +825,15 @@ function transition(orderId, toStatus, opts = {}) {
       payload: opts.payload || null,
       at,
     });
+    if (toStatus === 'completed') {
+      const listing = updated.listingId ? db.findById('listings', updated.listingId) : null;
+      require('./intelligence').trackEvent({
+        type: 'sale_completed',
+        user: db.findById('users', updated.userId),
+        listing,
+        order: updated,
+      });
+    }
     return { order: updated, event };
   });
 }

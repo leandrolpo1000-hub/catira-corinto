@@ -95,6 +95,63 @@ function ensureTestPixProduct() {
   };
 }
 
+const SAMPLE_OFFICIAL_PRODUCTS = [
+  { title: 'Fone Bluetooth Catira', slug: 'tecnologia', price: 49, description: 'Fone sem fio de exemplo Catira.' },
+  { title: 'Kit chaves 40 peças', slug: 'ferramentas', price: 79, description: 'Jogo de chaves de exemplo Catira.' },
+  { title: 'Luminária LED de mesa', slug: 'casa-moveis', price: 39, description: 'Luminária de mesa de exemplo Catira.' },
+  { title: 'Boné trucker Corinto', slug: 'moda', price: 35, description: 'Boné de exemplo Catira.' },
+  { title: 'Pulverizador 5 L', slug: 'agro', price: 89, description: 'Pulverizador de exemplo Catira.' },
+];
+
+function categoryForSample(slug) {
+  return db.findOne('categories', (c) => c.slug === slug && c.active !== false)
+    || db.findOne('categories', (c) => c.active !== false)
+    || db.findOne('categories', () => true);
+}
+
+function ensureSampleOfficialProducts() {
+  const seller = ensureOfficialSeller();
+  const items = SAMPLE_OFFICIAL_PRODUCTS.map((spec) => {
+    const cat = categoryForSample(spec.slug);
+    if (!cat) throw httpError(500, 'Categoria ausente.');
+    const existing = db.findOne('officialProducts', (p) => p.title === spec.title);
+    let product = existing;
+    let created = false;
+    if (!product) {
+      const createdRow = createProduct({
+        title: spec.title,
+        description: spec.description,
+        categoryId: cat.id,
+        condition: 'novo',
+        pricingRule: 'fixed',
+        manualPrice: spec.price,
+        published: true,
+        cityId: 'corinto',
+        city: 'Corinto',
+        delivery: { mode: 'cities', cityIds: ['corinto'] },
+      }, { id: seller.id });
+      product = createdRow.product;
+      created = true;
+    }
+    const offerOut = upsertOffer(product.id, {
+      provider: 'catira',
+      price: spec.price,
+      stock: 10,
+      status: 'active',
+      enabled: true,
+      buyEnabled: true,
+    }, { id: seller.id });
+    const full = productOf(product.id);
+    return {
+      product: full,
+      offer: offerOut.offer,
+      listing: db.findById('listings', full.listingId),
+      created,
+    };
+  });
+  return { items, createdCount: items.filter((row) => row.created).length };
+}
+
 function isPlatformUser(user) {
   return !!user && user.role === PLATFORM_ROLE;
 }
@@ -880,6 +937,8 @@ module.exports = {
   PRICING_RULES,
   ensureOfficialSeller,
   ensureTestPixProduct,
+  ensureSampleOfficialProducts,
+  SAMPLE_OFFICIAL_PRODUCTS,
   isPlatformUser,
   isPlatformId,
   isOfficialListing,

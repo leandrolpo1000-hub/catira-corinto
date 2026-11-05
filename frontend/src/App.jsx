@@ -32,6 +32,7 @@ export default function App() {
         <Route path="/checkout/entrega" element={<Checkout />} />
         <Route path="/checkout/:orderId/pagamento" element={<Checkout />} />
         <Route path="/checkout/:orderId/pix" element={<Checkout />} />
+        <Route path="/checkout/:orderId/aguardando" element={<Checkout />} />
         <Route path="/checkout/:orderId/ok" element={<Checkout />} />
         <Route path="/checkout/:orderId" element={<Checkout />} />
         <Route path="/checkout" element={<Checkout />} />

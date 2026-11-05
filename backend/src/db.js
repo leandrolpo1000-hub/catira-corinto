@@ -82,6 +82,8 @@ const EMPTY = {
   orderEvents: [],
   checkoutSessions: [],
   userAddresses: [],
+  intelligenceEvents: [],
+  intelligenceDaily: [],
 };
 
 let sqlite = null;

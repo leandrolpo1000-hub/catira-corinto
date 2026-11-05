@@ -76,6 +76,7 @@ export default function Listing() {
   async function share() {
     const url = window.location.href;
     const text = 'CATIRA — ' + item.title + ' · ' + money(item.price);
+    api('/api/listings/' + item.id + '/share', { method: 'POST' }).catch(() => {});
     try {
       if (navigator.share) {
         await navigator.share({ title: item.title, text, url });

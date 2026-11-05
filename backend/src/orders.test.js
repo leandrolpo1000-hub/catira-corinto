@@ -746,6 +746,38 @@ async function run() {
       assert.strictEqual(pixNoDoc.status, 400);
       assert.match(String(pixNoDoc.body && pixNoDoc.body.error), /CPF|CNPJ/i);
 
+      const cardDeniedOther = await jsonRequest(server, {
+        method: 'POST',
+        path: '/api/orders/' + openCreate.body.id + '/card',
+        token: signToken(other),
+        body: { token: 'tok_x', documentNumber: '19100000000', ip: '127.0.0.1' },
+      });
+      assert.strictEqual(cardDeniedOther.status, 404, 'outro usuário não cobra cartão');
+
+      const cardNoToken = await jsonRequest(server, {
+        method: 'POST',
+        path: '/api/orders/' + openCreate.body.id + '/card',
+        token: signToken(buyer),
+        body: { documentNumber: '19100000000', ip: '127.0.0.1' },
+      });
+      assert.strictEqual(cardNoToken.status, 400, 'cartão exige token');
+      assert.match(String(cardNoToken.body && cardNoToken.body.error), /token/i);
+
+      const instDeniedOther = await jsonRequest(server, {
+        path: '/api/orders/' + openCreate.body.id + '/installments',
+        token: signToken(other),
+      });
+      assert.strictEqual(instDeniedOther.status, 404, 'outro usuário não lê parcelas');
+
+      db.update('orders', openCreate.body.id, { pixEmv: '00020126...', appmaxOrderId: 77 }, { allowOrderWrite: true });
+      const cardAfterPix = await jsonRequest(server, {
+        method: 'POST',
+        path: '/api/orders/' + openCreate.body.id + '/card',
+        token: signToken(buyer),
+        body: { token: 'tok_x', documentNumber: '19100000000', ip: '127.0.0.1' },
+      });
+      assert.strictEqual(cardAfterPix.status, 409, 'pedido com Pix não aceita cartão');
+
       const listStill = await jsonRequest(server, {
         path: '/api/orders',
         token: signToken(buyer),
