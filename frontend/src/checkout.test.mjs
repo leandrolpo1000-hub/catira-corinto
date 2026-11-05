@@ -17,8 +17,10 @@ assert.equal(app.includes('/checkout/:orderId/pix'), true, 'App tem Pix');
 assert.equal(app.includes('/checkout/:orderId/ok'), true, 'App tem confirmação');
 assert.equal(app.includes('minhas-compras'), false, 'Fase B sem Minhas compras');
 
-assert.equal(listing.includes('Comprar no Catira'), true, 'ficha tem Comprar');
-assert.equal(listing.includes('/checkout?listing='), true, 'ficha navega ao checkout');
+const product = fs.readFileSync(path.join(dir, 'pages/OfficialProduct.jsx'), 'utf8');
+assert.equal(product.includes('Comprar pelo Catira'), true, 'PDP tem Comprar');
+assert.equal(product.includes('/checkout?listing='), true, 'PDP navega ao checkout');
+assert.equal(listing.includes("Navigate to={'/produto/'"), true, 'oficial redireciona à PDP');
 assert.equal(listing.includes('/api/orders'), false, 'ficha não POST pedido');
 assert.equal(listing.includes('AppmaxCardForm'), false, 'ficha sem cartão');
 
@@ -54,5 +56,9 @@ assert.equal(checkout.includes('Copiar código Pix'), true, 'copia Pix');
 
 assert.equal(css.includes('.ck-cta'), true, 'CTA sticky');
 assert.equal(components.includes("startsWith('/checkout')"), true, 'esconde tab bar no checkout');
+assert.equal(checkout.includes('deliveryEta'), true, 'checkout usa prazo helper');
+assert.equal(checkout.includes('productPath({ id: order.listingId, isOfficial: true })'), true, 'confirmed back is official');
+assert.equal(checkout.includes('order.isOfficial'), false, 'confirmed back does not use order.isOfficial');
+assert.equal(app.includes('/produto/:id'), true, 'rota produto');
 
 console.log('OK checkout ui tests');

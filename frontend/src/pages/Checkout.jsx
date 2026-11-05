@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, money } from '../api';
+import { api, digitsOnly, money } from '../api';
+import { formatPhoneBr, formatCep, formatUf, formatCpfCnpj } from '../masks';
 import { useAuth } from '../auth';
 import { NeedAuth, Top } from '../components';
 import { useConfig } from '../config';
 import { loadAppmaxScript, initAppmaxScripts } from '../appmax';
 import AppmaxCardForm from '../AppmaxCardForm';
+import { productPath } from '../productPath';
+import { deliveryEta } from '../deliveryEta';
 
 function checkoutPath(listingId, offerId) {
   return '/checkout?listing=' + encodeURIComponent(listingId || '') + '&offer=' + encodeURIComponent(offerId || '');
@@ -124,14 +127,14 @@ function Review() {
           <div className="error">
             Esta oferta não está disponível para compra.
             <div style={{ height: 10 }} />
-            <Link className="btn btn-ghost" to={'/anuncio/' + listingId}>Voltar ao anúncio</Link>
+            <Link className="btn btn-ghost" to={productPath(listing)}>Voltar ao anúncio</Link>
           </div>
         )}
         {listing && offer && !offer.buyEnabled && (
           <div className="error">
             A compra pelo Catira ainda não está disponível nesta fase.
             <div style={{ height: 10 }} />
-            <Link className="btn btn-ghost" to={'/anuncio/' + listingId}>Voltar ao anúncio</Link>
+            <Link className="btn btn-ghost" to={productPath(listing)}>Voltar ao anúncio</Link>
           </div>
         )}
         {listing && offer && offer.buyEnabled && (
@@ -168,18 +171,26 @@ function Delivery() {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const saved = listingId && offerId ? loadDraft(listingId, offerId) : null;
-  const [form, setForm] = useState(saved || {
-    recipientName: user && user.name ? user.name : '',
-    phone: user && user.phone ? user.phone : '',
-    cep: '',
-    street: '',
-    number: '',
-    complement: '',
-    district: '',
-    city: '',
-    state: 'MG',
-    cityId: 'corinto',
-  });
+  const [form, setForm] = useState((() => {
+    const base = saved || {
+      recipientName: user && user.name ? user.name : '',
+      phone: user && user.phone ? user.phone : '',
+      cep: '',
+      street: '',
+      number: '',
+      complement: '',
+      district: '',
+      city: '',
+      state: 'MG',
+      cityId: 'corinto',
+    };
+    return {
+      ...base,
+      phone: formatPhoneBr(base.phone),
+      cep: formatCep(base.cep),
+      state: formatUf(base.state || 'MG'),
+    };
+  })());
 
   useEffect(() => {
     if (!user || !listingId) return;
@@ -194,6 +205,7 @@ function Delivery() {
   const offers = listing && Array.isArray(listing.officialOffers) ? listing.officialOffers : [];
   const offer = offers.find((o) => o.id === offerId && o.provider === 'catira' && o.buyEnabled);
   const unitCents = offer ? Math.round(Number(offer.price || 0) * 100) : 0;
+  const eta = deliveryEta(form.city);
 
   function setF(k, v) {
     setForm((prev) => ({ ...prev, [k]: v }));
@@ -227,15 +239,15 @@ function Delivery() {
         <Steps current="ship" />
         {err && <div className="error">{err}</div>}
         {listing && !offer && (
-          <Link className="btn btn-ghost" to={'/anuncio/' + listingId}>Voltar ao anúncio</Link>
+          <Link className="btn btn-ghost" to={productPath(listing)}>Voltar ao anúncio</Link>
         )}
         {listing && offer && (
           <form onSubmit={submit}>
             <ProductCard listing={listing} offer={offer} />
             <h2 className="ck-h2">Endereço de entrega</h2>
             <div className="field"><label>Nome do destinatário</label><input value={form.recipientName} onChange={(e) => setF('recipientName', e.target.value)} required autoComplete="name" /></div>
-            <div className="field"><label>Telefone</label><input value={form.phone} onChange={(e) => setF('phone', e.target.value)} required inputMode="tel" autoComplete="tel" /></div>
-            <div className="field"><label>CEP</label><input value={form.cep} onChange={(e) => setF('cep', e.target.value)} required inputMode="numeric" autoComplete="postal-code" /></div>
+            <div className="field"><label>Telefone</label><input value={form.phone} onChange={(e) => setF('phone', formatPhoneBr(e.target.value))} required inputMode="tel" autoComplete="tel" placeholder="(38) 99999-9999" /></div>
+            <div className="field"><label>CEP</label><input value={form.cep} onChange={(e) => setF('cep', formatCep(e.target.value))} required inputMode="numeric" autoComplete="postal-code" placeholder="00000-000" /></div>
             <div className="field"><label>Rua</label><input value={form.street} onChange={(e) => setF('street', e.target.value)} required autoComplete="street-address" /></div>
             <div className="ck-grid2">
               <div className="field"><label>Número</label><input value={form.number} onChange={(e) => setF('number', e.target.value)} required /></div>
@@ -244,8 +256,10 @@ function Delivery() {
             <div className="field"><label>Bairro</label><input value={form.district} onChange={(e) => setF('district', e.target.value)} required /></div>
             <div className="ck-grid2">
               <div className="field"><label>Cidade</label><input value={form.city} onChange={(e) => setF('city', e.target.value)} required /></div>
-              <div className="field"><label>Estado</label><input value={form.state} onChange={(e) => setF('state', e.target.value)} required maxLength={2} /></div>
+              <div className="field"><label>Estado</label><input value={form.state} onChange={(e) => setF('state', formatUf(e.target.value))} required maxLength={2} placeholder="MG" /></div>
             </div>
+            <p className="hint pdp-eta-line">{eta.label}</p>
+            <p className="hint">O endereço acima confirma o prazo da entrega.</p>
             <Summary
               title={listing.title}
               qty={1}
@@ -341,7 +355,7 @@ function Payment() {
           method: 'POST',
           body: JSON.stringify({
             token: cardToken,
-            documentNumber: docNumber,
+            documentNumber: digitsOnly(docNumber),
             ip: payerIp,
             installments,
           }),
@@ -353,7 +367,7 @@ function Payment() {
       } else {
         const charged = await api('/api/orders/' + orderId + '/pix', {
           method: 'POST',
-          body: JSON.stringify({ documentNumber: docNumber, ip: payerIp }),
+          body: JSON.stringify({ documentNumber: digitsOnly(docNumber), ip: payerIp }),
         });
         setOrder(charged);
         nav('/checkout/' + orderId + '/pix');
@@ -409,7 +423,14 @@ function Payment() {
             )}
             <div className="field">
               <label>CPF/CNPJ</label>
-              <input value={docNumber} onChange={(e) => setDocNumber(e.target.value)} required inputMode="numeric" autoComplete="off" />
+              <input
+                value={docNumber}
+                onChange={(e) => setDocNumber(formatCpfCnpj(e.target.value))}
+                required
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="000.000.000-00"
+              />
             </div>
             <Summary
               title={order.productSnapshot && order.productSnapshot.title}
@@ -585,7 +606,7 @@ function Confirmed() {
             <p className="hint">{pixStatusLabel(order.status)}{order.createdAt ? ' · ' + new Date(order.createdAt).toLocaleString('pt-BR') : ''}</p>
             <Link className="btn btn-primary" to={'/checkout/' + order.id + '/ok'}>Ver meu pedido</Link>
             <div style={{ height: 10 }} />
-            {order.listingId && <Link className="btn btn-ghost" to={'/anuncio/' + order.listingId}>Voltar ao anúncio</Link>}
+            {order.listingId && <Link className="btn btn-ghost" to={productPath({ id: order.listingId, isOfficial: true })}>Voltar ao anúncio</Link>}
           </div>
         )}
       </div>

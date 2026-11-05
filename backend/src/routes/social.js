@@ -5,9 +5,10 @@ const multer = require('multer');
 const { randomUUID } = require('crypto');
 const db = require('../db');
 const { authRequired, authOptional, safeUser, isAdminRole } = require('../middleware');
-const { serializeListing, conversationKey, recalcRating, rankedSellers, rankOf, sellerScore } = require('../helpers');
+const { serializeListing, conversationKey, recalcRating, rankedSellers, rankOf, sellerScore, invalidateRanking } = require('../helpers');
 const { activeCategories } = require('../categories');
 const trades = require('../trades');
+const { pageSlice } = require('../pagination');
 
 const router = express.Router();
 
@@ -67,6 +68,7 @@ router.post('/favorites/:listingId', authRequired, (req, res) => {
   );
   if (existing) {
     db.remove('favorites', existing.id);
+    invalidateRanking();
     return res.json({ favorited: false });
   }
   db.insert('favorites', {
@@ -74,6 +76,7 @@ router.post('/favorites/:listingId', authRequired, (req, res) => {
     listingId: listing.id,
     createdAt: new Date().toISOString(),
   });
+  invalidateRanking();
   require('../intelligence').trackEvent({ type: 'favorite', req, user: req.user, listing });
   res.json({ favorited: true });
 });
@@ -84,7 +87,7 @@ router.get('/favorites', authRequired, (req, res) => {
     .map((f) => db.findById('listings', f.listingId))
     .filter(Boolean)
     .map((l) => serializeListing(l, { favorited: true, user: req.user, userId: req.user.id }));
-  res.json({ items });
+  res.json(pageSlice(items, req.query));
 });
 
 router.post('/interest', authRequired, (req, res) => {
@@ -260,7 +263,7 @@ router.get('/conversations', authRequired, (req, res) => {
         unread: unreadCount(c.id, req.user.id),
       };
     });
-  res.json({ items });
+  res.json(pageSlice(items, req.query));
 });
 
 router.post('/conversations/:id/close', authRequired, (req, res) => {
@@ -297,7 +300,7 @@ router.get('/conversations/:id', authRequired, (req, res) => {
       other: safeUser(db.findById('users', otherId)),
       listing: listing ? serializeListing(listing, { user: req.user, userId: req.user.id }) : null,
     },
-    messages: visibleMessages(conv.id, req.user.id),
+    messages: visibleMessages(conv.id, req.user.id).slice(-100),
   });
 });
 
@@ -610,7 +613,7 @@ router.get('/users/:id', authOptional, (req, res) => {
   const stats = sellerScore(user);
   res.json({
     user: { ...safeUser(user), rank: rankOf(user.id), ...stats },
-    listings,
+    listings: pageSlice(listings, req.query),
     reviews: reviews.map((r) => ({
       ...r,
       reviewer: safeUser(db.findById('users', r.reviewerId)),

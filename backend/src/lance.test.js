@@ -1,6 +1,9 @@
 const assert = require('assert');
+const http = require('http');
+const express = require('express');
 const db = require('./db');
 const lance = require('./lance');
+const { authOptional, signToken } = require('./middleware');
 
 function fail(msg) {
   throw new Error(msg);
@@ -453,7 +456,127 @@ async function run() {
   assert.ok(m.ownBuy);
   assert.strictEqual(m.ownBuyEnabled, false);
 
+  await testLanceListPagination(admin, joao, maria, cat, now);
+
   console.log('OK lance tests');
 }
 
-run();
+function jsonGet(server, path, token) {
+  const { port } = server.address();
+  return new Promise((resolve, reject) => {
+    http.get({
+      host: '127.0.0.1',
+      port,
+      path,
+      headers: token ? { Authorization: 'Bearer ' + token } : {},
+    }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        let parsed = null;
+        try { parsed = body ? JSON.parse(body) : null; } catch { parsed = body; }
+        resolve({ status: res.statusCode, body: parsed });
+      });
+    }).on('error', reject);
+  });
+}
+
+async function testLanceListPagination(admin, joao, maria, cat, now) {
+  const listingIds = [];
+  const oppIds = [];
+  const interestIds = [];
+  const ts = Date.now();
+  for (let i = 0; i < 21; i++) {
+    const listing = db.insert('listings', {
+      userId: joao.id,
+      title: '[P9] lance hub ' + i,
+      description: 'Task 9 lance pagination.',
+      categoryId: cat.id,
+      subcategory: '',
+      price: 200 + i,
+      condition: 'usado',
+      city: 'Corinto',
+      cityId: 'corinto',
+      listingType: 'venda',
+      acceptsTrade: false,
+      acceptsCash: true,
+      tradeWishes: '',
+      status: 'published',
+      featured: false,
+      vip: false,
+      premium: false,
+      quickOfferEnabled: true,
+      views: 0,
+      createdAt: new Date(ts - i * 1000).toISOString(),
+      publishedAt: new Date(ts - i * 1000).toISOString(),
+    });
+    listingIds.push(listing.id);
+    const opp = db.insert('opportunities', {
+      listingId: listing.id,
+      sellerId: joao.id,
+      status: 'available',
+      mode: 'intermediation',
+      sellerAskPrice: 200 + i,
+      referencePrice: 200 + i,
+      goodsPrice: 200 + i,
+      intermediationFee: 0,
+      conditions: '',
+      city: 'Corinto',
+      cityId: 'corinto',
+      categoryId: cat.id,
+      forwardedAt: new Date(ts - i * 1000).toISOString(),
+      inOwnBox: false,
+      createdAt: new Date(ts - i * 1000).toISOString(),
+      updatedAt: new Date(ts - i * 1000).toISOString(),
+    });
+    oppIds.push(opp.id);
+    const interest = db.insert('opportunityInterests', {
+      opportunityId: opp.id,
+      dealerId: maria.id,
+      status: 'interested',
+      note: 'p9 ' + i,
+      createdAt: new Date(ts - i * 1000).toISOString(),
+    });
+    interestIds.push(interest.id);
+  }
+
+  const app = express();
+  app.use(express.json());
+  app.use(authOptional);
+  app.use('/api/lance', require('./routes/lance').publicRouter);
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const token = signToken(maria);
+
+  try {
+    const hub = await jsonGet(server, '/api/lance/hub', token);
+    assert.strictEqual(hub.status, 200);
+    assert.ok(Array.isArray(hub.body.items), 'hub items array');
+    assert.ok(hub.body.items.length <= 20, 'hub default page size');
+    assert.ok(hub.body.total >= 21, 'hub total is full set');
+    assert.strictEqual(typeof hub.body.page, 'number');
+    assert.strictEqual(typeof hub.body.limit, 'number');
+    assert.strictEqual(hub.body.limit, 20);
+    const hub2 = await jsonGet(server, '/api/lance/hub?page=2', token);
+    assert.strictEqual(hub2.body.page, 2);
+    assert.ok(hub2.body.items.length >= 1, 'hub page 2 has remainder');
+
+    const mine = await jsonGet(server, '/api/lance/mine', token);
+    assert.strictEqual(mine.status, 200);
+    assert.ok(Array.isArray(mine.body.items), 'mine items array');
+    assert.ok(mine.body.items.length <= 20, 'lance mine default page size');
+    assert.ok(mine.body.total >= 21, 'lance mine total is full set');
+    assert.strictEqual(mine.body.page, 1);
+    assert.strictEqual(mine.body.limit, 20);
+  } finally {
+    await new Promise((r) => server.close(r));
+    interestIds.forEach((id) => db.remove('opportunityInterests', id));
+    oppIds.forEach((id) => db.remove('opportunities', id));
+    listingIds.forEach((id) => db.remove('listings', id));
+  }
+}
+
+run().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

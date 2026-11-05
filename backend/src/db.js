@@ -91,6 +91,87 @@ let stmts = null;
 let cache = null;
 let batchDepth = 0;
 
+const FK_INDEX = {
+  listingImages: ['listingId'],
+  listingLikes: ['listingId'],
+  listingComments: ['listingId'],
+  listingReviews: ['listingId'],
+  favorites: ['listingId', 'userId'],
+  listings: ['userId', 'status'],
+  payments: ['listingId'],
+  messages: ['conversationId'],
+};
+
+let byId = new Map();
+let byFk = new Map();
+let usersByEmail = new Map();
+
+function fkKey(table, field) {
+  return table + ':' + field;
+}
+
+function bucket(table, field, value) {
+  const k = fkKey(table, field);
+  if (!byFk.has(k)) byFk.set(k, new Map());
+  const m = byFk.get(k);
+  const id = value == null ? '' : String(value);
+  if (!m.has(id)) m.set(id, []);
+  return m.get(id);
+}
+
+function indexInsert(table, rec) {
+  if (!rec || rec.id == null) return;
+  if (!byId.has(table)) byId.set(table, new Map());
+  byId.get(table).set(String(rec.id), rec);
+  const fields = FK_INDEX[table] || [];
+  for (let i = 0; i < fields.length; i++) {
+    bucket(table, fields[i], rec[fields[i]]).push(rec);
+  }
+  if (table === 'users' && rec.email) usersByEmail.set(String(rec.email).toLowerCase(), rec);
+}
+
+function indexRemove(table, rec) {
+  if (!rec || rec.id == null) return;
+  const ids = byId.get(table);
+  if (ids) ids.delete(String(rec.id));
+  const fields = FK_INDEX[table] || [];
+  for (let i = 0; i < fields.length; i++) {
+    const arr = bucket(table, fields[i], rec[fields[i]]);
+    const idx = arr.indexOf(rec);
+    if (idx >= 0) arr.splice(idx, 1);
+  }
+  if (table === 'users' && rec.email) {
+    const k = String(rec.email).toLowerCase();
+    if (usersByEmail.get(k) === rec) usersByEmail.delete(k);
+  }
+}
+
+function rebuildIndexes() {
+  byId = new Map();
+  byFk = new Map();
+  usersByEmail = new Map();
+  const tables = Object.keys(cache || {});
+  for (let t = 0; t < tables.length; t++) {
+    const list = cache[tables[t]] || [];
+    for (let i = 0; i < list.length; i++) indexInsert(tables[t], list[i]);
+  }
+}
+
+function byFkLookup(table, field, value) {
+  if (table === 'users' && field === 'email') {
+    const rec = usersByEmail.get(value == null ? '' : String(value).toLowerCase());
+    return rec ? [rec] : [];
+  }
+  const k = fkKey(table, field);
+  const m = byFk.get(k);
+  if (!m) return [];
+  return m.get(value == null ? '' : String(value)) || [];
+}
+
+function indexSize(table, field, value) {
+  return byFkLookup(table, field, value).length;
+}
+
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
@@ -216,6 +297,7 @@ function boot() {
   openSqlite();
   maybeImportJson();
   cache = loadFromSqlite();
+  rebuildIndexes();
 }
 
 function persist(opts) {
@@ -253,6 +335,7 @@ function batch(fn) {
     if (isOuter) {
       try { sqlite.exec('ROLLBACK'); } catch {}
       cache = snapshot;
+      rebuildIndexes();
     }
     throw err;
   }
@@ -265,7 +348,11 @@ function all(table) {
 }
 
 function findById(table, id) {
-  return all(table).find((r) => r.id === id) || null;
+  if (id == null) return null;
+  const rec = byId.get(table) && byId.get(table).get(String(id));
+  if (!rec) return null;
+  if (isProtectedTable(table)) return structuredClone(rec);
+  return rec;
 }
 
 function findWhere(table, pred) {
@@ -341,6 +428,7 @@ function insert(table, row, opts) {
   const rec = { id: row.id || randomUUID(), ...row };
   if (!cache[table]) cache[table] = [];
   cache[table].push(rec);
+  indexInsert(table, rec);
   persistRow(table, rec);
   return rec;
 }
@@ -392,9 +480,12 @@ function update(table, id, patch, opts) {
     }
   }
   if (!changed) return prev;
-  list[idx] = { ...prev, ...patch, id };
-  persistRow(table, list[idx]);
-  return list[idx];
+  const next = { ...prev, ...patch, id };
+  indexRemove(table, prev);
+  list[idx] = next;
+  indexInsert(table, next);
+  persistRow(table, next);
+  return next;
 }
 
 function remove(table, id, opts) {
@@ -402,6 +493,8 @@ function remove(table, id, opts) {
   const list = cache[table] || [];
   const idx = list.findIndex((r) => r.id === id);
   if (idx < 0) return false;
+  const rec = list[idx];
+  indexRemove(table, rec);
   list.splice(idx, 1);
   persistDelete(table, id);
   return true;
@@ -413,8 +506,10 @@ function removeWhere(table, pred, opts) {
   const kept = [];
   for (let i = 0; i < list.length; i++) {
     const rec = list[i];
-    if (pred(rec)) persistDelete(table, rec.id);
-    else kept.push(rec);
+    if (pred(rec)) {
+      indexRemove(table, rec);
+      persistDelete(table, rec.id);
+    } else kept.push(rec);
   }
   cache[table] = kept;
 }
@@ -435,6 +530,7 @@ function reset(data, opts) {
   try {
     writeAll(cache);
     if (outer) sqlite.exec('COMMIT');
+    rebuildIndexes();
   } catch (err) {
     if (outer) {
       try { sqlite.exec('ROLLBACK'); } catch {}
@@ -466,6 +562,7 @@ function getCache() {
 
 function reload() {
   cache = loadFromSqlite();
+  rebuildIndexes();
   return cache;
 }
 
@@ -489,7 +586,16 @@ function ensureDailyBackup() {
   return backupNow();
 }
 
+const closeHooks = [];
+
+function onClose(fn) {
+  if (typeof fn === 'function') closeHooks.push(fn);
+}
+
 function close() {
+  for (let i = 0; i < closeHooks.length; i++) {
+    try { closeHooks[i](); } catch {}
+  }
   if (!sqlite) return;
   try { sqlite.close(); } catch {}
   sqlite = null;
@@ -520,6 +626,10 @@ module.exports = {
   backupNow,
   ensureDailyBackup,
   close,
+  onClose,
+  byFk: byFkLookup,
+  indexSize,
+  rebuildIndexes,
   DATA_DIR,
   JSON_FILE,
   SQLITE_FILE,

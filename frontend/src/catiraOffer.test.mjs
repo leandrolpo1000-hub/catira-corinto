@@ -37,7 +37,7 @@ assert.equal(listing.includes('loadAppmaxScript'), false, 'ficha sem Appmax JS')
 assert.equal(adminPage.includes("['pedidos', 'Pedidos']"), true, 'admin tem aba Pedidos');
 assert.equal(adminPage.includes('Compra pelo Catira ainda não está disponível'), true, 'aba Pedidos não sugere compra');
 assert.equal(adminPage.includes('Liberar compra'), false, 'admin geral sem liberar compra');
-const pedidosBlock = adminPage.slice(adminPage.indexOf("tab === 'pedidos'"), adminPage.indexOf("tab === 'rel'"));
+const pedidosBlock = adminPage.slice(adminPage.indexOf("{tab === 'pedidos'"), adminPage.indexOf("{tab === 'rel'"));
 assert.equal(pedidosBlock.includes('Pedido Appmax'), true, 'aba Pedidos mostra id Appmax');
 assert.equal(pedidosBlock.includes('payment.method') || pedidosBlock.includes('paymentMethod'), true, 'aba Pedidos mostra método');
 assert.equal(pedidosBlock.includes('appmaxPaymentStatus') || pedidosBlock.includes('Status Appmax'), true, 'aba Pedidos mostra status Appmax');

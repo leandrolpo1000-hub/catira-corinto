@@ -6,14 +6,47 @@ import { Empty, ListingRow, NeedAuth, Top } from '../components';
 import { Ico } from '../icons';
 import { useConfig } from '../config';
 import { compressImage } from '../compressImage';
+import { PAGE } from '../pageSize';
 
 export function Favorites() {
   const { user } = useAuth();
   const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const pageSize = PAGE.favorites;
+
+  function listUrl(nextPage) {
+    return '/api/favorites?page=' + nextPage + '&limit=' + pageSize;
+  }
+
   useEffect(() => {
     if (!user) return;
-    api('/api/favorites').then((d) => setItems(d.items || [])).catch(() => {});
+    setLoading(true);
+    api(listUrl(1))
+      .then((d) => {
+        setItems(d.items || []);
+        setTotal(d.total || 0);
+        setPage(1);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, [user]);
+
+  async function loadMore() {
+    const next = page + 1;
+    setLoading(true);
+    try {
+      const d = await api(listUrl(next));
+      setItems((prev) => prev.concat(d.items || []));
+      setTotal(d.total || 0);
+      setPage(next);
+    } catch {
+      /* keep current list */
+    }
+    setLoading(false);
+  }
+
   if (!user) return <NeedAuth next="/favoritos" />;
   return (
     <>
@@ -26,10 +59,24 @@ export function Favorites() {
             <ListingRow item={it} extra={<span className={'status ' + it.status}>{statusLabel[it.status] || it.status}</span>} />
             <button className="btn btn-ghost" style={{ marginBottom: 10 }} onClick={async () => {
               await api('/api/favorites/' + it.id, { method: 'POST' });
-              setItems((prev) => prev.filter((x) => x.id !== it.id));
+              setLoading(true);
+              try {
+                const d = await api(listUrl(1));
+                setItems(d.items || []);
+                setTotal(d.total || 0);
+                setPage(1);
+              } catch {
+                /* keep current list */
+              }
+              setLoading(false);
             }}>Remover dos favoritos</button>
           </div>
         ))}
+        {items.length < total && (
+          <button className="btn btn-ghost" style={{ marginTop: 16 }} disabled={loading} onClick={loadMore}>
+            {loading ? 'Carregando...' : 'Ver mais'}
+          </button>
+        )}
       </div>
     </>
   );
@@ -39,37 +86,41 @@ export function Mine() {
   const { user } = useAuth();
   const { fee, vipListingFee, feeEnabled } = useConfig();
   const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('all');
   const [invite, setInvite] = useState(null);
   const nav = useNavigate();
+  const pageSize = PAGE.favorites;
 
-  async function load() {
-    const d = await api('/api/listings/mine');
-    setItems(d.items || []);
+  function mineUrl(nextPage, nextTab) {
+    const qs = new URLSearchParams();
+    qs.set('page', String(nextPage));
+    qs.set('limit', String(pageSize));
+    const status = nextTab === 'all' ? '' : nextTab;
+    if (status) qs.set('status', status);
+    return '/api/listings/mine?' + qs.toString();
   }
-  useEffect(() => { if (user) load().catch(() => {}); }, [user]);
-  if (!user) return <NeedAuth next="/meus-anuncios" />;
 
-  const map = {
-    all: items,
-    published: items.filter((i) => i.status === 'published'),
-    awaiting_payment: items.filter((i) => i.status === 'awaiting_payment'),
-    awaiting_confirmation: items.filter((i) => i.status === 'awaiting_confirmation'),
-    payment_expired: items.filter((i) => i.status === 'payment_expired'),
-    changes_requested: items.filter((i) => i.status === 'changes_requested'),
-    awaiting_review: items.filter((i) => i.status === 'awaiting_review'),
-    cancelled: items.filter((i) => i.status === 'cancelled'),
-    sold: items.filter((i) => i.status === 'sold'),
-    traded: items.filter((i) => i.status === 'traded'),
-    negotiated: items.filter((i) => i.status === 'negotiated'),
-    expired: items.filter((i) => i.status === 'expired'),
-    paused: items.filter((i) => i.status === 'paused'),
-  };
+  async function load(nextPage, nextTab, append) {
+    const d = await api(mineUrl(nextPage, nextTab));
+    setItems((prev) => (append ? prev.concat(d.items || []) : d.items || []));
+    setTotal(d.total || 0);
+    setPage(nextPage);
+  }
+
+  useEffect(() => {
+    if (!user) return;
+    setLoading(true);
+    load(1, tab, false).catch(() => {}).finally(() => setLoading(false));
+  }, [user, tab]);
+  if (!user) return <NeedAuth next="/meus-anuncios" />;
 
   async function act(id, action) {
     if (action === 'pay') return nav('/pagar/' + id);
     const d = await api('/api/listings/' + id + '/status', { method: 'POST', body: JSON.stringify({ action }) });
-    await load();
+    await load(1, tab, false);
     if (d && d.actionInvite) setInvite({ id, title: d.title || '', action });
   }
 
@@ -82,8 +133,8 @@ export function Mine() {
             <button key={k} className={'chip' + (tab === k ? ' on' : '')} onClick={() => setTab(k)}>{l}</button>
           ))}
         </div>
-        {!map[tab].length && <Empty title="Nada aqui" text={feeEnabled ? 'Publique por ' + money(fee) + '.' : 'Publicar é grátis.'} to="/anunciar" cta="+ Anunciar" />}
-        {map[tab].map((it) => (
+        {!items.length && <Empty title="Nada aqui" text={feeEnabled ? 'Publique por ' + money(fee) + '.' : 'Publicar é grátis.'} to="/anunciar" cta="+ Anunciar" />}
+        {items.map((it) => (
           <div key={it.id} className="list-item" style={{ flexDirection: 'column' }}>
             <ListingRow item={it} />
             {it.adminNote && (it.status === 'changes_requested' || it.status === 'cancelled') && (
@@ -110,6 +161,15 @@ export function Mine() {
             </div>
           </div>
         ))}
+        {items.length < total && (
+          <button className="btn btn-ghost" style={{ marginTop: 16 }} disabled={loading} onClick={async () => {
+            setLoading(true);
+            try { await load(page + 1, tab, true); } catch { /* keep current list */ }
+            setLoading(false);
+          }}>
+            {loading ? 'Carregando...' : 'Ver mais'}
+          </button>
+        )}
       </div>
       {invite && (
         <div className="modal-bg" onClick={() => setInvite(null)}>
@@ -181,15 +241,33 @@ function listTime(iso) {
 export function Conversations() {
   const { user } = useAuth();
   const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(false);
   const [closed, setClosed] = useState(false);
   const [q, setQ] = useState('');
   const isAdmin = user && isAdminRole(user.role);
+  const pageSize = PAGE.favorites;
 
-  async function load(showClosed) {
-    const d = await api('/api/conversations' + (showClosed ? '?status=closed' : ''));
-    setItems(d.items || []);
+  function convUrl(nextPage, showClosed) {
+    const qs = new URLSearchParams();
+    qs.set('page', String(nextPage));
+    qs.set('limit', String(pageSize));
+    if (showClosed) qs.set('status', 'closed');
+    return '/api/conversations?' + qs.toString();
   }
-  useEffect(() => { if (user) load(closed).catch(() => {}); }, [user, closed]);
+
+  async function load(showClosed, nextPage, append) {
+    const d = await api(convUrl(nextPage, showClosed));
+    setItems((prev) => (append ? prev.concat(d.items || []) : d.items || []));
+    setTotal(d.total || 0);
+    setPage(nextPage);
+  }
+  useEffect(() => {
+    if (!user) return;
+    setLoading(true);
+    load(closed, 1, false).catch(() => {}).finally(() => setLoading(false));
+  }, [user, closed]);
 
   if (!user) return <NeedAuth next="/conversas" />;
 
@@ -252,6 +330,15 @@ export function Conversations() {
             </Link>
           ))}
         </div>
+        {!term && items.length < total && (
+          <button className="btn btn-ghost" style={{ marginTop: 16 }} disabled={loading} onClick={async () => {
+            setLoading(true);
+            try { await load(closed, page + 1, true); } catch { /* keep current list */ }
+            setLoading(false);
+          }}>
+            {loading ? 'Carregando...' : 'Ver mais'}
+          </button>
+        )}
       </div>
     </>
   );
@@ -1149,8 +1236,19 @@ export function PublicUser() {
   const { user } = useAuth();
   const [data, setData] = useState(null);
   const [posts, setPosts] = useState([]);
+  const [listings, setListings] = useState([]);
+  const [listingsTotal, setListingsTotal] = useState(0);
+  const [listingsPage, setListingsPage] = useState(1);
+  const [listingsLoading, setListingsLoading] = useState(false);
+  const pageSize = PAGE.favorites;
   useEffect(() => {
-    api('/api/users/' + id).then(setData).catch(() => {});
+    api('/api/users/' + id + '?page=1&limit=' + pageSize).then((d) => {
+      setData(d);
+      const page = d.listings && Array.isArray(d.listings.items) ? d.listings : { items: d.listings || [], total: (d.listings || []).length };
+      setListings(page.items || []);
+      setListingsTotal(page.total || 0);
+      setListingsPage(1);
+    }).catch(() => {});
     api('/api/acao?userId=' + id + '&limit=12').then((d) => setPosts(d.items || [])).catch(() => setPosts([]));
   }, [id]);
   if (!data) return <><Top back /><div className="page">Carregando...</div></>;
@@ -1195,7 +1293,23 @@ export function PublicUser() {
           </>
         )}
         <h2 style={{ margin: '16px 0 10px', fontSize: 17 }}>Anúncios</h2>
-        {data.listings.map((it) => <ListingRow key={it.id} item={it} />)}
+        {listings.map((it) => <ListingRow key={it.id} item={it} />)}
+        {listings.length < listingsTotal && (
+          <button className="btn btn-ghost" style={{ marginTop: 8 }} disabled={listingsLoading} onClick={async () => {
+            setListingsLoading(true);
+            try {
+              const next = listingsPage + 1;
+              const d = await api('/api/users/' + id + '?page=' + next + '&limit=' + pageSize);
+              const page = d.listings && Array.isArray(d.listings.items) ? d.listings : { items: d.listings || [] };
+              setListings((prev) => prev.concat(page.items || []));
+              setListingsTotal(page.total || 0);
+              setListingsPage(next);
+            } catch { /* keep current list */ }
+            setListingsLoading(false);
+          }}>
+            {listingsLoading ? 'Carregando...' : 'Ver mais'}
+          </button>
+        )}
         <h2 style={{ margin: '16px 0 10px', fontSize: 17 }}>Avaliações</h2>
         {(data.reviews || []).map((r) => (
           <div key={r.id} className="list-item">

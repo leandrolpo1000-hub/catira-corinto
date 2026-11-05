@@ -17,6 +17,11 @@ const DEDUPE_MS = {
   contact_whatsapp: 60 * 60 * 1000,
 };
 const ETERNAL = ['favorite', 'proposal', 'checkout', 'order_created', 'payment_confirmed', 'sale_completed'];
+const BUFFER_TYPES = ['view', 'search'];
+const BUFFER_MS = 2000;
+const dedupeLast = new Map();
+const pendingIntel = [];
+let intelTimer = null;
 const PRICE_BUCKETS = [
   { id: '0-50', min: 0, max: 5000 },
   { id: '50-100', min: 5000, max: 10000 },
@@ -298,28 +303,51 @@ function normalizeQuery(q) {
     .slice(0, 120);
 }
 
+function dedupeKey(type, actor, extra) {
+  let key = `${type}:${actor}:${(extra && (extra.listingId || extra.query)) || ''}`;
+  if (extra && Object.prototype.hasOwnProperty.call(extra, 'city')) key += ':' + (extra.city || '');
+  if (extra && extra.orderId) key += ':' + extra.orderId;
+  if (extra && extra.proposalId) key += ':' + extra.proposalId;
+  return key;
+}
+
 function dedupeHit(type, actor, extra, nowMs) {
   const windowMs = DEDUPE_MS[type];
   const eternal = ETERNAL.includes(type);
   if (!windowMs && !eternal) return false;
-  const from = eternal ? 0 : nowMs - windowMs;
-  return !!db.findOne('intelligenceEvents', (e) => {
-    if (e.type !== type) return false;
-    if (e.actorHash !== actor) return false;
-    if (extra.listingId && e.listingId !== extra.listingId) return false;
-    if (extra.query && e.query !== extra.query) return false;
-    if (Object.prototype.hasOwnProperty.call(extra, 'city')) {
-      const want = extra.city == null ? '' : String(extra.city);
-      const have = e.city == null ? (e.cityId == null ? '' : String(e.cityId)) : String(e.city);
-      const haveId = e.cityId == null ? '' : String(e.cityId);
-      if (want !== have && want !== haveId) return false;
-    }
-    if (extra.orderId && e.orderId !== extra.orderId) return false;
-    if (extra.proposalId && e.proposalId !== extra.proposalId) return false;
-    const t = new Date(e.createdAt).getTime();
-    return t >= from;
-  });
+  const last = dedupeLast.get(dedupeKey(type, actor, extra));
+  if (last == null) return false;
+  if (eternal) return true;
+  return nowMs - last < windowMs;
 }
+
+function rememberDedupe(type, actor, extra, nowMs) {
+  dedupeLast.set(dedupeKey(type, actor, extra), nowMs);
+}
+
+function flushPendingEvents() {
+  if (intelTimer) {
+    clearTimeout(intelTimer);
+    intelTimer = null;
+  }
+  if (!pendingIntel.length) return;
+  const batch = pendingIntel.splice(0, pendingIntel.length);
+  for (let i = 0; i < batch.length; i++) {
+    const saved = db.insert('intelligenceEvents', batch[i]);
+    bumpDaily(saved);
+  }
+}
+
+function scheduleIntelFlush() {
+  if (intelTimer) return;
+  intelTimer = setTimeout(() => {
+    intelTimer = null;
+    flushPendingEvents();
+  }, BUFFER_MS);
+  if (intelTimer.unref) intelTimer.unref();
+}
+
+db.onClose(flushPendingEvents);
 
 function bumpDaily(event) {
   const day = dayKey(event.createdAt);
@@ -376,6 +404,7 @@ function trackEvent(input) {
     };
     if (input.type === 'search') extra.city = city || cityId || '';
     if (dedupeHit(input.type, hash, extra, nowMs)) return { recorded: false, reason: 'dedupe' };
+    rememberDedupe(input.type, hash, extra, nowMs);
     const event = {
       type: input.type,
       createdAt,
@@ -393,6 +422,11 @@ function trackEvent(input) {
       paymentMethod: order && order.paymentMethod ? order.paymentMethod : null,
       source: input.source || 'app',
     };
+    if (BUFFER_TYPES.includes(input.type) && !input.now) {
+      pendingIntel.push(event);
+      scheduleIntelFlush();
+      return { recorded: true, event };
+    }
     const saved = db.insert('intelligenceEvents', event);
     bumpDaily(saved);
     return { recorded: true, event: saved };
@@ -404,7 +438,7 @@ function trackEvent(input) {
 
 function periodFrom(period, now) {
   const t = now || Date.now();
-  if (period === 'all') return 0;
+  if (period === 'all') return t - 365 * 86400000;
   if (period === '30d') return t - 30 * 86400000;
   if (period === 'month') {
     const d = new Date(t);
@@ -455,14 +489,22 @@ function buildDashboard(filters) {
     return { enabled: false, stats: {}, rankings: {}, series: [], opportunities: [] };
   }
   const period = (filters && filters.period) || '7d';
-  const city = ((filters && filters.city) || '').trim().toLowerCase();
+  const cityRaw = ((filters && filters.city) || '').trim();
+  const city = cityRaw.toLowerCase();
+  const cityRef = resolveCityRef(cityRaw);
+  const cityIdFilter = cityRef.cityId ? String(cityRef.cityId).toLowerCase() : '';
   const category = ((filters && filters.category) || '').trim();
   const now = Date.now();
   const from = periodFrom(period, now);
   const to = now;
   let events = db.all('intelligenceEvents').filter((e) => inRange(e.createdAt, from, to));
   if (city) {
-    events = events.filter((e) => String(e.city || '').toLowerCase() === city || String(e.cityId || '').toLowerCase() === city);
+    const cityName = String(cityRef.city || '').toLowerCase();
+    events = events.filter((e) => {
+      const eventCity = String(e.city || '').toLowerCase();
+      const eventCityId = String(e.cityId || '').toLowerCase();
+      return eventCity === city || eventCityId === city || eventCityId === cityIdFilter || eventCity === cityName;
+    });
   }
   if (category) events = events.filter((e) => e.categoryId === category);
   const of = (t) => events.filter((e) => e.type === t);
@@ -498,17 +540,36 @@ function buildDashboard(filters) {
     }).length,
   }));
 
-  const dayCount = period === 'year' ? 30 : period === 'all' ? 30 : period === '30d' ? 30 : period === 'month' ? new Date().getDate() : 7;
+  const dayCount = period === 'year' ? 30 : period === 'all' ? 365 : period === '30d' ? 30 : period === 'month' ? new Date().getDate() : 7;
+  const fromDay = new Date(from).toISOString().slice(0, 10);
+  const toDay = new Date(to).toISOString().slice(0, 10);
+  const daily = {};
+  db.all('intelligenceDaily').forEach((row) => {
+    if (!row || !row.day) return;
+    if (row.day < fromDay || row.day > toDay) return;
+    if (city) {
+      const match = String(row.cityId || '').toLowerCase() === cityIdFilter
+        || String(row.cityId || '').toLowerCase() === city;
+      if (!match) return;
+    }
+    if (category && row.categoryId !== category) return;
+    if (!daily[row.day]) daily[row.day] = { searches: 0, views: 0, orders: 0, paid: 0 };
+    const n = Number(row.count || 0);
+    if (row.type === 'search') daily[row.day].searches += n;
+    else if (row.type === 'view') daily[row.day].views += n;
+    else if (row.type === 'order_created') daily[row.day].orders += n;
+    else if (row.type === 'payment_confirmed') daily[row.day].paid += n;
+  });
   const series = [];
   for (let i = dayCount - 1; i >= 0; i--) {
     const d = new Date(now - i * 86400000).toISOString().slice(0, 10);
-    const dayEvents = events.filter((e) => dayKey(e.createdAt) === d);
+    const counts = daily[d] || { searches: 0, views: 0, orders: 0, paid: 0 };
     series.push({
       date: d,
-      searches: dayEvents.filter((e) => e.type === 'search').length,
-      views: dayEvents.filter((e) => e.type === 'view').length,
-      orders: dayEvents.filter((e) => e.type === 'order_created').length,
-      paid: dayEvents.filter((e) => e.type === 'payment_confirmed').length,
+      searches: counts.searches,
+      views: counts.views,
+      orders: counts.orders,
+      paid: counts.paid,
     });
   }
 
@@ -579,4 +640,7 @@ module.exports = {
   trackEvent,
   buildDashboard,
   ensureDemoEvents,
+  flushPendingEvents,
+  DEDUPE_MS,
+  ETERNAL,
 };

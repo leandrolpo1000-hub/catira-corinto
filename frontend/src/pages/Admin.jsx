@@ -2,11 +2,20 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { api, money, statusLabel, formatBRLInput, parseBRL, listingTypes } from '../api';
 import { useAuth, isAdminRole, isMasterRole } from '../auth';
+import { formatPhoneBr, formatCpf, formatCnpj } from '../masks';
 import { BrandLogo, Top } from '../components';
 import AdminAuctions from './AdminAuctions';
 import AdminIntelligence from './AdminIntelligence';
 import AdminLance from './AdminLance';
 import AdminOfficial from './AdminOfficial';
+import { PAGE } from '../pageSize';
+
+function formatPixKey(type, value) {
+  if (type === 'phone') return formatPhoneBr(value);
+  if (type === 'cpf') return formatCpf(value);
+  if (type === 'cnpj') return formatCnpj(value);
+  return value;
+}
 
 export default function Admin() {
   const { user } = useAuth();
@@ -81,14 +90,34 @@ export default function Admin() {
   const [userStatusFilter, setUserStatusFilter] = useState('');
   const [orders, setOrders] = useState([]);
   const [orderDetail, setOrderDetail] = useState(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [userCities, setUserCities] = useState([]);
+  const [adsCities, setAdsCities] = useState([]);
+  const [adsSellers, setAdsSellers] = useState([]);
+  const adminLimit = PAGE.admin;
+
+  function goTab(k) {
+    setTab(k);
+    setPage(1);
+  }
+
+  function setFilter(setter, value) {
+    setter(value);
+    setPage(1);
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if ((params.get('code') && params.get('state')) || params.get('tab') === 'oficial') {
       setTab('oficial');
+      setPage(1);
       return;
     }
-    if (isMaster && (tab === 'users' || tab === 'dash')) setTab('dash');
+    if (isMaster && (tab === 'users' || tab === 'dash')) {
+      setTab('dash');
+      setPage(1);
+    }
   }, [isMaster]);
 
   useLayoutEffect(() => {
@@ -98,23 +127,79 @@ export default function Admin() {
     window.scrollTo(0, y);
   }, [tab, pixMsg, pixErr]);
 
+  function listQuery(extra) {
+    const p = new URLSearchParams();
+    p.set('page', String(page));
+    p.set('limit', String(adminLimit));
+    Object.entries(extra || {}).forEach(([k, v]) => {
+      if (v) p.set(k, String(v));
+    });
+    return p.toString();
+  }
+
+  function setPaged(setter, d) {
+    setter(d.items || []);
+    setTotal(typeof d.total === 'number' ? d.total : (d.items || []).length);
+  }
+
   useEffect(() => {
     if (!user || !isAdminRole(user.role)) return;
-    api('/api/auth/cities').then(setDashCities).catch(() => {});
-    api('/api/admin/users').then((d) => setUsers(d.items || [])).catch(() => {});
-    api('/api/admin/listings').then((d) => setListings(d.items || [])).catch(() => {});
-    api('/api/admin/reports').then((d) => setReports(d.items || [])).catch(() => {});
-    api('/api/admin/categories').then((d) => setCats(d.items || [])).catch(() => {});
-    api('/api/admin/publications').then((d) => setPubs(d.items || [])).catch(() => {});
-    api('/api/admin/payments').then((d) => setPays(d.items || [])).catch(() => {});
-    api('/api/admin/promos').then((d) => setPromos(d.items || [])).catch(() => {});
-    api('/api/admin/reviews').then((d) => setReviewsAdmin(d.items || [])).catch(() => {});
-    api('/api/admin/acao').then((d) => setActionPosts(d.items || [])).catch(() => {});
-    api('/api/admin/orders').then((d) => setOrders(d.items || [])).catch(() => {});
-    if (user.role === 'master') {
+    if (tab === 'dash') {
+      api('/api/auth/cities').then(setDashCities).catch(() => {});
+    }
+    if (tab === 'dash' || tab === 'cat') {
+      api('/api/admin/categories').then((d) => setCats(d.items || [])).catch(() => {});
+    }
+  }, [user, tab]);
+
+  useEffect(() => {
+    if (!user || !isAdminRole(user.role)) return;
+    let cancelled = false;
+    function apply(setter) {
+      return (d) => {
+        if (!cancelled) setPaged(setter, d);
+      };
+    }
+    if (tab === 'users') {
+      api('/api/admin/users?' + listQuery({ q: userQ, status: userStatusFilter, role: userRoleFilter, city: userCityFilter })).then((d) => {
+        apply(setUsers)(d);
+        if (!cancelled) setUserCities((d.facets && d.facets.cities) || []);
+      }).catch(() => {});
+    }
+    if (tab === 'ads') {
+      api('/api/admin/listings?' + listQuery({
+        q: adsQ,
+        status: adsStatus === 'quick' ? '' : adsStatus,
+        quick: adsStatus === 'quick' ? '1' : '',
+        city: adsCity,
+        type: adsType,
+        plan: adsPlan,
+        seller: adsSeller,
+      })).then((d) => {
+        apply(setListings)(d);
+        if (!cancelled) {
+          setAdsCities((d.facets && d.facets.cities) || []);
+          setAdsSellers((d.facets && d.facets.sellers) || []);
+        }
+      }).catch(() => {});
+    }
+    if (tab === 'pays') api('/api/admin/payments?' + listQuery()).then(apply(setPays)).catch(() => {});
+    if (tab === 'pedidos') api('/api/admin/orders?' + listQuery()).then(apply(setOrders)).catch(() => {});
+    if (tab === 'rep') api('/api/admin/reports?' + listQuery()).then(apply(setReports)).catch(() => {});
+    if (tab === 'rev') api('/api/admin/reviews?' + listQuery()).then(apply(setReviewsAdmin)).catch(() => {});
+    if (tab === 'acao') api('/api/admin/acao?' + listQuery()).then(apply(setActionPosts)).catch(() => {});
+    if (tab === 'rel') api('/api/admin/publications?' + listQuery({ q: pubQ, status: pubStatus })).then(apply(setPubs)).catch(() => {});
+    if (tab === 'promo') api('/api/admin/promos').then((d) => { if (!cancelled) setPromos(d.items || []); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [user, tab, page, userQ, userStatusFilter, userRoleFilter, userCityFilter, adsQ, adsStatus, adsCity, adsType, adsPlan, adsSeller, pubQ, pubStatus]);
+
+  useEffect(() => {
+    if (!user || user.role !== 'master') return;
+    if (tab === 'pix') {
       api('/api/admin/pix').then((d) => {
         setPix({
           ...d,
+          pixKey: formatPixKey(d.pixKeyType, d.pixKey),
           commonFeeEnabled: d.commonFeeEnabled !== undefined ? !!d.commonFeeEnabled : !!d.feeEnabled,
           vipFeeEnabled: !!d.vipFeeEnabled,
           premiumFeeEnabled: d.premiumFeeEnabled !== undefined ? !!d.premiumFeeEnabled : true,
@@ -125,20 +210,22 @@ export default function Admin() {
           premiumDayFeeLabel: formatBRLInput(String(Math.round(Number(d.premiumDayFee || 30) * 100))),
         });
       }).catch(() => {});
+    }
+    if (tab === 'mail') {
       api('/api/admin/mail').then((d) => {
         setMail({ ...d, apiKey: '' });
         setMailTestTo((t) => t || user.email || '');
       }).catch(() => {});
-      api('/api/admin/appmax').then((d) => setAppmaxCfg({ ...d, clientSecret: '' })).catch(() => {});
-      api('/api/admin/banner').then(setBanner).catch(() => {});
-      api('/api/admin/assistant').then((d) => setAssist({ ...d, apiKey: '' })).catch(() => {});
     }
-  }, [user]);
+    if (tab === 'appmax') api('/api/admin/appmax').then((d) => setAppmaxCfg({ ...d, clientSecret: '' })).catch(() => {});
+    if (tab === 'banner') api('/api/admin/banner').then(setBanner).catch(() => {});
+    if (tab === 'assist') api('/api/admin/assistant').then((d) => setAssist({ ...d, apiKey: '' })).catch(() => {});
+  }, [user, tab]);
 
   useEffect(() => {
-    if (!user || user.role !== 'master') return;
+    if (!user || user.role !== 'master' || tab !== 'dash') return;
     api('/api/admin/dashboard?period=' + dashFilter.period + '&city=' + encodeURIComponent(dashFilter.city) + '&status=' + encodeURIComponent(dashFilter.status) + '&category=' + encodeURIComponent(dashFilter.category || '')).then(setDash).catch(() => {});
-  }, [user, dashFilter.period, dashFilter.city, dashFilter.status, dashFilter.category]);
+  }, [user, tab, dashFilter.period, dashFilter.city, dashFilter.status, dashFilter.category]);
 
   if (!user) return <Navigate to="/entrar?next=/admin" replace />;
   if (!isAdminRole(user.role)) return <Navigate to="/" replace />;
@@ -150,60 +237,44 @@ export default function Admin() {
     return 'Comum';
   }
 
-  const userCities = Array.from(new Set(users.map((u) => u.city).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const userRows = users;
 
-  const userRows = users.filter((u) => {
-    const hay = [u.name, u.email, u.city, u.phone, u.role, u.status].join(' ').toLowerCase();
-    if (userQ && !hay.includes(userQ.trim().toLowerCase())) return false;
-    if (userRoleFilter === 'user' && (u.role !== 'user' || u.dealerStatus === 'approved')) return false;
-    if (userRoleFilter === 'dealer' && !(u.role === 'user' && u.dealerStatus === 'approved')) return false;
-    if (userRoleFilter === 'admin' && u.role !== 'admin') return false;
-    if (userRoleFilter === 'master' && u.role !== 'master') return false;
-    if (userCityFilter && u.city !== userCityFilter) return false;
-    if (userStatusFilter && u.status !== userStatusFilter) return false;
-    return true;
-  });
+  async function reloadUsers() {
+    const d = await api('/api/admin/users?' + listQuery({ q: userQ, status: userStatusFilter, role: userRoleFilter, city: userCityFilter }));
+    setPaged(setUsers, d);
+    setUserCities((d.facets && d.facets.cities) || []);
+  }
 
   async function userStatus(id, status) {
     await api('/api/admin/users/' + id + '/status', { method: 'POST', body: JSON.stringify({ status }) });
-    const d = await api('/api/admin/users');
-    setUsers(d.items || []);
+    await reloadUsers();
   }
 
   async function userRole(id, role) {
     await api('/api/admin/users/' + id + '/role', { method: 'POST', body: JSON.stringify({ role }) });
-    const d = await api('/api/admin/users');
-    setUsers(d.items || []);
+    await reloadUsers();
   }
 
-  function adPlan(l) {
-    if (l.premium || l.plan === 'premium') return 'premium';
-    if (l.vip || l.plan === 'vip' || l.plan === 'destaque' || l.featured) return 'destaque';
-    return 'comum';
+  const adsRows = listings;
+
+  async function reloadListings() {
+    const d = await api('/api/admin/listings?' + listQuery({
+      q: adsQ,
+      status: adsStatus === 'quick' ? '' : adsStatus,
+      quick: adsStatus === 'quick' ? '1' : '',
+      city: adsCity,
+      type: adsType,
+      plan: adsPlan,
+      seller: adsSeller,
+    }));
+    setPaged(setListings, d);
+    setAdsCities((d.facets && d.facets.cities) || []);
+    setAdsSellers((d.facets && d.facets.sellers) || []);
   }
-
-  const adsCities = Array.from(new Set(listings.map((l) => l.city).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-  const adsSellers = Array.from(new Set(listings.map((l) => (l.seller && l.seller.name) || '').filter(Boolean))).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-
-  const adsRows = listings.filter((l) => {
-    if (adsStatus === 'quick') {
-      if (!l.quickOfferEnabled) return false;
-    } else if (adsStatus && l.status !== adsStatus) {
-      return false;
-    }
-    const hay = [l.title, l.city, l.seller && l.seller.name, l.seller && l.seller.email, l.id, l.listingType, l.listingTypeLabel].join(' ').toLowerCase();
-    if (adsQ && !hay.includes(adsQ.trim().toLowerCase())) return false;
-    if (adsCity && l.city !== adsCity) return false;
-    if (adsType && (l.listingType || 'venda') !== adsType) return false;
-    if (adsPlan && adPlan(l) !== adsPlan) return false;
-    if (adsSeller && ((l.seller && l.seller.name) || '') !== adsSeller) return false;
-    return true;
-  });
 
   async function listingAct(id, action, extra) {
     await api('/api/admin/listings/' + id + '/action', { method: 'POST', body: JSON.stringify({ action, ...(extra || {}) }) });
-    const d = await api('/api/admin/listings');
-    setListings(d.items || []);
+    await reloadListings();
   }
 
   function openNote(id, action, current) {
@@ -236,8 +307,20 @@ export default function Admin() {
 
   async function reportStatus(id, status) {
     await api('/api/admin/reports/' + id + '/status', { method: 'POST', body: JSON.stringify({ status }) });
-    const d = await api('/api/admin/reports');
-    setReports(d.items || []);
+    const d = await api('/api/admin/reports?' + listQuery());
+    setPaged(setReports, d);
+  }
+
+  function Pager() {
+    const pages = Math.max(1, Math.ceil(total / adminLimit));
+    if (total <= adminLimit) return null;
+    return (
+      <div className="row-btns" style={{ marginTop: 12 }}>
+        <button className="btn btn-ghost" type="button" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Anterior</button>
+        <span className="hint">Página {page} de {pages} · {total}</span>
+        <button className="btn btn-ghost" type="button" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>Ver mais</button>
+      </div>
+    );
   }
 
   async function addCat(e) {
@@ -328,7 +411,7 @@ export default function Admin() {
             ? [['dash', 'Catira Intelligence'], ['pix', 'PIX'], ['appmax', 'Appmax'], ['mail', 'E-mail'], ['assist', 'Assistente'], ['leilao', 'Leilão'], ['lance', 'Oportunidades'], ['banner', 'Banner'], ['promo', 'Cupons'], ['pays', 'Pagamentos'], ['pedidos', 'Pedidos'], ['rel', 'Relatórios'], ['users', 'Usuários'], ['ads', 'Anúncios'], ['acao', 'Em Ação'], ['rep', 'Denúncias'], ['rev', 'Avaliações'], ['cat', 'Categorias'], ['oficial', 'Oficial']]
             : [['leilao', 'Leilão'], ['lance', 'Oportunidades'], ['promo', 'Cupons'], ['pays', 'Pagamentos'], ['pedidos', 'Pedidos'], ['rel', 'Relatórios'], ['users', 'Usuários'], ['ads', 'Anúncios'], ['acao', 'Em Ação'], ['rep', 'Denúncias'], ['rev', 'Avaliações'], ['cat', 'Categorias'], ['oficial', 'Oficial']]
           ).map(([k, l]) => (
-            <button key={k} className={'chip' + (tab === k ? ' on' : '')} onClick={() => setTab(k)}>{l}</button>
+            <button key={k} className={'chip' + (tab === k ? ' on' : '')} onClick={() => goTab(k)}>{l}</button>
           ))}
         </div>
 
@@ -377,6 +460,7 @@ export default function Admin() {
                  });
                  setPix({
                    ...d,
+                   pixKey: formatPixKey(d.pixKeyType, d.pixKey),
                    commonFeeEnabled: !!d.commonFeeEnabled,
                    vipFeeEnabled: !!d.vipFeeEnabled,
                    premiumFeeEnabled: !!d.premiumFeeEnabled,
@@ -433,7 +517,7 @@ export default function Admin() {
               </div>
               <div className="field">
                 <label>Tipo da chave</label>
-                <select value={pix.pixKeyType} onChange={(e) => setPix({ ...pix, pixKeyType: e.target.value })}>
+                <select value={pix.pixKeyType} onChange={(e) => setPix({ ...pix, pixKeyType: e.target.value, pixKey: formatPixKey(e.target.value, pix.pixKey) })}>
                   <option value="email">E-mail</option>
                   <option value="phone">Celular</option>
                   <option value="cpf">CPF</option>
@@ -445,9 +529,18 @@ export default function Admin() {
                 <label>Chave PIX</label>
                 <input
                   value={pix.pixKey}
-                  onChange={(e) => setPix({ ...pix, pixKey: e.target.value })}
+                  onChange={(e) => setPix({ ...pix, pixKey: formatPixKey(pix.pixKeyType, e.target.value) })}
                   required={!!(pix.commonFeeEnabled || pix.vipFeeEnabled || pix.premiumFeeEnabled)}
-                  placeholder="Sua chave para receber a taxa"
+                  placeholder={
+                    pix.pixKeyType === 'phone'
+                      ? '(38) 99999-9999'
+                      : pix.pixKeyType === 'cpf'
+                        ? '000.000.000-00'
+                        : pix.pixKeyType === 'cnpj'
+                          ? '00.000.000/0001-00'
+                          : 'Sua chave para receber a taxa'
+                  }
+                  inputMode={pix.pixKeyType === 'phone' ? 'tel' : (pix.pixKeyType === 'cpf' || pix.pixKeyType === 'cnpj' ? 'numeric' : undefined)}
                 />
               </div>
               <div className="field">
@@ -875,26 +968,20 @@ export default function Admin() {
                   <div className="row-btns" style={{ marginTop: 8 }}>
                     <button className="btn btn-green" onClick={async () => {
                       await api('/api/admin/payments/' + p.id + '/confirm', { method: 'POST', body: JSON.stringify({}) });
-                      const d = await api('/api/admin/payments');
-                      setPays(d.items || []);
-                      api('/api/admin/publications').then((x) => setPubs(x.items || [])).catch(() => {});
-                      api('/api/admin/users').then((x) => setUsers(x.items || [])).catch(() => {});
-                      const ads = await api('/api/admin/listings');
-                      setListings(ads.items || []);
-                      setTab('ads');
-                      setAdsStatus('awaiting_review');
-                      setOpenAd(p.listingId || (p.listing && p.listing.id) || '');
+                      const d = await api('/api/admin/payments?' + listQuery());
+                      setPaged(setPays, d);
                     }}>Confirmar pagamento</button>
                     <button className="btn btn-ghost" onClick={async () => {
                       await api('/api/admin/payments/' + p.id + '/reject', { method: 'POST', body: JSON.stringify({}) });
-                      const d = await api('/api/admin/payments');
-                      setPays(d.items || []);
+                      const d = await api('/api/admin/payments?' + listQuery());
+                      setPaged(setPays, d);
                     }}>Recusar</button>
                   </div>
                 )}
               </div>
             ))}
             {!pays.length && <p className="hint">Nenhum pagamento ainda.</p>}
+            <Pager />
           </>
         )}
 
@@ -920,6 +1007,7 @@ export default function Admin() {
               </div>
             ))}
             {!orders.length && <p className="hint">Nenhum pedido ainda.</p>}
+            <Pager />
             {orderDetail && orderDetail.order && (
               <div className="card" style={{ marginTop: 12 }}>
                 <strong>Pedido {orderDetail.order.id}</strong>
@@ -959,11 +1047,11 @@ export default function Admin() {
             <div className="filters">
               <div className="field">
                 <label>Buscar</label>
-                <input value={pubQ} onChange={(e) => setPubQ(e.target.value)} placeholder="Nome, e-mail, telefone ou ID" />
+                <input value={pubQ} onChange={(e) => setFilter(setPubQ, e.target.value)} placeholder="Nome, e-mail, telefone ou ID" />
               </div>
               <div className="field">
                 <label>Status</label>
-                <select value={pubStatus} onChange={(e) => setPubStatus(e.target.value)}>
+                 <select value={pubStatus} onChange={(e) => setFilter(setPubStatus, e.target.value)}>
                   <option value="">Todos</option>
                   <option value="published">Publicado</option>
                   <option value="awaiting_payment">Aguardando pagamento</option>
@@ -1020,6 +1108,7 @@ export default function Admin() {
                 </tbody>
               </table>
             </div>
+            <Pager />
           </>
         )}
 
@@ -1029,12 +1118,12 @@ export default function Admin() {
             <div className="filters">
               <div className="field">
                 <label>Buscar</label>
-                <input value={userQ} onChange={(e) => setUserQ(e.target.value)} placeholder="Nome, e-mail, cidade ou telefone" />
+                 <input value={userQ} onChange={(e) => setFilter(setUserQ, e.target.value)} placeholder="Nome, e-mail, cidade ou telefone" />
               </div>
               <div className="grid2">
                 <div className="field">
                   <label>Perfil</label>
-                  <select value={userRoleFilter} onChange={(e) => setUserRoleFilter(e.target.value)}>
+                   <select value={userRoleFilter} onChange={(e) => setFilter(setUserRoleFilter, e.target.value)}>
                     <option value="">Todos</option>
                     <option value="user">Comum</option>
                     <option value="dealer">Catireiro</option>
@@ -1044,14 +1133,14 @@ export default function Admin() {
                 </div>
                 <div className="field">
                   <label>Cidade</label>
-                  <select value={userCityFilter} onChange={(e) => setUserCityFilter(e.target.value)}>
+                   <select value={userCityFilter} onChange={(e) => setFilter(setUserCityFilter, e.target.value)}>
                     <option value="">Todas</option>
                     {userCities.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div className="field">
                   <label>Status</label>
-                  <select value={userStatusFilter} onChange={(e) => setUserStatusFilter(e.target.value)}>
+                   <select value={userStatusFilter} onChange={(e) => setFilter(setUserStatusFilter, e.target.value)}>
                     <option value="">Todos</option>
                     <option value="active">Ativo</option>
                     <option value="blocked">Bloqueado</option>
@@ -1059,7 +1148,7 @@ export default function Admin() {
                 </div>
               </div>
             </div>
-            <p className="hint">{userRows.length} de {users.length} usuário{users.length === 1 ? '' : 's'}</p>
+            <p className="hint">{userRows.length} de {total} usuário{total === 1 ? '' : 's'}</p>
             <table className="table">
               <thead><tr><th>Nome</th><th>Perfil</th><th>Cidade</th><th>Status</th><th></th></tr></thead>
               <tbody>
@@ -1087,6 +1176,7 @@ export default function Admin() {
               </tbody>
             </table>
             {!userRows.length && <p className="hint">Nenhum usuário com esses filtros.</p>}
+            <Pager />
           </div>
         )}
 
@@ -1109,32 +1199,32 @@ export default function Admin() {
                 ['expired', 'Expirados'],
                 ['cancelled', 'Encerrados'],
               ].map(([k, lab]) => (
-                <button key={k || 'all'} type="button" className={'chip' + (adsStatus === k ? ' on' : '')} onClick={() => setAdsStatus(k)}>{lab}</button>
+                 <button key={k || 'all'} type="button" className={'chip' + (adsStatus === k ? ' on' : '')} onClick={() => setFilter(setAdsStatus, k)}>{lab}</button>
               ))}
             </div>
             <div className="filters">
               <div className="field">
                 <label>Buscar</label>
-                <input value={adsQ} onChange={(e) => setAdsQ(e.target.value)} placeholder="Título, vendedor, cidade ou ID" />
+                 <input value={adsQ} onChange={(e) => setFilter(setAdsQ, e.target.value)} placeholder="Título, vendedor, cidade ou ID" />
               </div>
               <div className="grid2">
                 <div className="field">
                   <label>Cidade</label>
-                  <select value={adsCity} onChange={(e) => setAdsCity(e.target.value)}>
+                   <select value={adsCity} onChange={(e) => setFilter(setAdsCity, e.target.value)}>
                     <option value="">Todas</option>
                     {adsCities.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div className="field">
                   <label>Tipo</label>
-                  <select value={adsType} onChange={(e) => setAdsType(e.target.value)}>
+                   <select value={adsType} onChange={(e) => setFilter(setAdsType, e.target.value)}>
                     <option value="">Todos</option>
                     {listingTypes.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
                   </select>
                 </div>
                 <div className="field">
                   <label>Plano</label>
-                  <select value={adsPlan} onChange={(e) => setAdsPlan(e.target.value)}>
+                   <select value={adsPlan} onChange={(e) => setFilter(setAdsPlan, e.target.value)}>
                     <option value="">Todos</option>
                     <option value="comum">Comum</option>
                     <option value="destaque">Destaque</option>
@@ -1143,14 +1233,14 @@ export default function Admin() {
                 </div>
                 <div className="field">
                   <label>Vendedor</label>
-                  <select value={adsSeller} onChange={(e) => setAdsSeller(e.target.value)}>
+                   <select value={adsSeller} onChange={(e) => setFilter(setAdsSeller, e.target.value)}>
                     <option value="">Todos</option>
                     {adsSellers.map((n) => <option key={n} value={n}>{n}</option>)}
                   </select>
                 </div>
               </div>
             </div>
-            <p className="hint">{adsRows.length} de {listings.length} anúncio{listings.length === 1 ? '' : 's'}</p>
+            <p className="hint">{adsRows.length} de {total} anúncio{total === 1 ? '' : 's'}</p>
             {adsRows.map((l) => (
           <div key={l.id} className="list-item ad-card" style={{ flexDirection: 'column' }}>
             <button type="button" className="ad-summary" onClick={() => setOpenAd(openAd === l.id ? '' : l.id)}>
@@ -1205,7 +1295,7 @@ export default function Admin() {
             <div className="row-btns" style={{ marginTop: 8 }}>
               <button className="btn btn-ghost" type="button" onClick={() => { setPreviewAd(l); setPreviewPhoto(0); }}>Prévia</button>
               {l.quickOfferEnabled && (
-                <button className="btn btn-green" type="button" onClick={() => setTab('lance')}>Ver na fila</button>
+                 <button className="btn btn-green" type="button" onClick={() => goTab('lance')}>Ver na fila</button>
               )}
               <button className={'btn ' + (l.featured ? 'btn-green' : 'btn-ghost')} onClick={() => listingAct(l.id, l.featured ? 'unfeature' : 'feature')}>{l.featured ? 'Tirar destaque' : 'Destacar'}</button>
               <button className="btn btn-ghost" disabled={l.status === 'published'} onClick={() => listingAct(l.id, 'approve')}>Aprovar</button>
@@ -1240,6 +1330,7 @@ export default function Admin() {
           </div>
         ))}
             {!adsRows.length && <p className="hint">Nenhum anúncio com esses filtros.</p>}
+            <Pager />
           </>
         )}
 
@@ -1262,43 +1353,50 @@ export default function Admin() {
                   {p.status === 'published' && (
                     <button className="btn btn-ghost" onClick={async () => {
                       await api('/api/admin/acao/' + p.id + '/action', { method: 'POST', body: JSON.stringify({ action: 'hide' }) });
-                      const d = await api('/api/admin/acao');
-                      setActionPosts(d.items || []);
+                      const d = await api('/api/admin/acao?' + listQuery());
+                      setPaged(setActionPosts, d);
                     }}>Ocultar</button>
                   )}
                   {p.status === 'hidden' && (
                     <button className="btn btn-ghost" onClick={async () => {
                       await api('/api/admin/acao/' + p.id + '/action', { method: 'POST', body: JSON.stringify({ action: 'restore' }) });
-                      const d = await api('/api/admin/acao');
-                      setActionPosts(d.items || []);
+                      const d = await api('/api/admin/acao?' + listQuery());
+                      setPaged(setActionPosts, d);
                     }}>Restaurar</button>
                   )}
                   {p.status !== 'removed' && (
                     <button className="btn btn-ghost" onClick={async () => {
                       await api('/api/admin/acao/' + p.id + '/action', { method: 'POST', body: JSON.stringify({ action: 'remove' }) });
-                      const d = await api('/api/admin/acao');
-                      setActionPosts(d.items || []);
+                      const d = await api('/api/admin/acao?' + listQuery());
+                      setPaged(setActionPosts, d);
                     }}>Remover</button>
                   )}
                 </div>
               </div>
             ))}
             {!actionPosts.length && <p className="hint">Nenhuma publicação.</p>}
+            <Pager />
           </>
         )}
 
-        {tab === 'rep' && reports.map((r) => (
-          <div key={r.id} className="list-item" style={{ flexDirection: 'column' }}>
-            <strong>{r.kind === 'action' ? 'Catira em Ação' : (r.listing?.title || 'Anúncio')}</strong>
-            <div className="hint">{r.reason} · {r.reporter?.name} · {statusLabel[r.status] || r.status}</div>
-            {r.description && <p className="hint">{r.description}</p>}
-            <div className="row-btns">
-              <button className="btn btn-ghost" onClick={() => reportStatus(r.id, 'reviewed')}>Analisar</button>
-              <button className="btn btn-ghost" onClick={() => reportStatus(r.id, 'resolved')}>Resolver</button>
-              <button className="btn btn-ghost" onClick={() => reportStatus(r.id, 'dismissed')}>Descartar</button>
-            </div>
-          </div>
-        ))}
+        {tab === 'rep' && (
+          <>
+            {reports.map((r) => (
+              <div key={r.id} className="list-item" style={{ flexDirection: 'column' }}>
+                <strong>{r.kind === 'action' ? 'Catira em Ação' : (r.listing?.title || 'Anúncio')}</strong>
+                <div className="hint">{r.reason} · {r.reporter?.name} · {statusLabel[r.status] || r.status}</div>
+                {r.description && <p className="hint">{r.description}</p>}
+                <div className="row-btns">
+                  <button className="btn btn-ghost" onClick={() => reportStatus(r.id, 'reviewed')}>Analisar</button>
+                  <button className="btn btn-ghost" onClick={() => reportStatus(r.id, 'resolved')}>Resolver</button>
+                  <button className="btn btn-ghost" onClick={() => reportStatus(r.id, 'dismissed')}>Descartar</button>
+                </div>
+              </div>
+            ))}
+            {!reports.length && <p className="hint">Nenhuma denúncia.</p>}
+            <Pager />
+          </>
+        )}
 
         {tab === 'rev' && (
           <>
@@ -1310,12 +1408,13 @@ export default function Admin() {
                 {r.comment && <p className="hint">{r.comment}</p>}
                 <button className="btn btn-ghost" onClick={async () => {
                   await api('/api/admin/reviews/' + r.id, { method: 'DELETE' });
-                  const d = await api('/api/admin/reviews');
-                  setReviewsAdmin(d.items || []);
+                  const d = await api('/api/admin/reviews?' + listQuery());
+                  setPaged(setReviewsAdmin, d);
                 }}>Remover</button>
               </div>
             ))}
             {!reviewsAdmin.length && <p className="hint">Nenhuma avaliação.</p>}
+            <Pager />
           </>
         )}
 
@@ -1422,8 +1521,7 @@ export default function Admin() {
                   method: 'PUT',
                   body: JSON.stringify({ ...saveDraft, password: savePassword }),
                 });
-                const d = await api('/api/admin/listings');
-                setListings(d.items || []);
+                await reloadListings();
                 setEditingAd('');
                 setSaveDraft(null);
                 setSavePassword('');

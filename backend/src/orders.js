@@ -1,5 +1,6 @@
 const db = require('./db');
 const official = require('./official');
+const { pageSlice } = require('./pagination');
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const OPEN_ORDER_STATUSES = ['draft', 'awaiting_payment'];
@@ -880,12 +881,13 @@ function serializeOrderList(order) {
   };
 }
 
-function listOrdersAdmin() {
-  return db
+function listOrdersAdmin(query) {
+  const list = db
     .all('orders')
     .slice()
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .map(serializeOrderList);
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const page = pageSlice(list, query);
+  return { ...page, items: page.items.map(serializeOrderList) };
 }
 
 function getOrderAdmin(orderId) {

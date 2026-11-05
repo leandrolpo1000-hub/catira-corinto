@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, money, winnerStatusLabel, auctionStatusLabel, lotLabel } from '../api';
+import { api, money, winnerStatusLabel, auctionStatusLabel, lotLabel, formatBRLInput, parseBRL } from '../api';
+import { formatBrDate, parseBrDate, isoToBrDate } from '../masks';
 import { isMasterRole } from '../auth';
 import { AUCTION_AUDIO_TRACKS, previewAuctionTrack, setAuctionAudioSources, stopAuctionAudio, unlockAuctionAudio } from '../auctionAudio';
 import { compressImages, revokePreviews } from '../compressImage';
@@ -225,8 +226,8 @@ export default function AdminAuctions({ user }) {
         <form className="filters" onSubmit={saveSettings}>
           {!isMaster && <p className="hint">Só o master altera as regras.</p>}
           <h3 style={{ fontSize: 14 }}>Geral</h3>
-          <div className="field"><label>Lance inicial mínimo (R$)</label><input type="number" step="0.01" value={settings.startingBidMin} onChange={(e) => setS('startingBidMin', e.target.value)} disabled={!isMaster} /></div>
-          <div className="field"><label>Incremento mínimo padrão (R$)</label><input type="number" step="0.01" value={settings.minIncrement} onChange={(e) => setS('minIncrement', e.target.value)} disabled={!isMaster} /></div>
+          <div className="field"><label>Lance inicial mínimo (R$)</label><input value={formatBRLInput(String(Math.round(Number(settings.startingBidMin || 0) * 100)))} onChange={(e) => setS('startingBidMin', parseBRL(e.target.value))} inputMode="numeric" placeholder="0,00" disabled={!isMaster} /></div>
+          <div className="field"><label>Incremento mínimo padrão (R$)</label><input value={formatBRLInput(String(Math.round(Number(settings.minIncrement || 0) * 100)))} onChange={(e) => setS('minIncrement', parseBRL(e.target.value))} inputMode="numeric" placeholder="0,00" disabled={!isMaster} /></div>
           <div className="field"><label>Duração mínima (horas)</label><input type="number" value={settings.minDurationHours} onChange={(e) => setS('minDurationHours', e.target.value)} disabled={!isMaster} /></div>
           <div className="field"><label>Duração máxima (horas)</label><input type="number" value={settings.maxDurationHours} onChange={(e) => setS('maxDurationHours', e.target.value)} disabled={!isMaster} /></div>
           <div className="field">
@@ -272,7 +273,7 @@ export default function AdminAuctions({ user }) {
             </select>
           </div>
           <h3 style={{ fontSize: 14 }}>Desbloqueio antecipado</h3>
-          <div className="field"><label>Taxa administrativa (R$)</label><input type="number" step="0.01" value={settings.earlyUnlockFee} onChange={(e) => setS('earlyUnlockFee', e.target.value)} disabled={!isMaster} /></div>
+          <div className="field"><label>Taxa administrativa (R$)</label><input value={formatBRLInput(String(Math.round(Number(settings.earlyUnlockFee || 0) * 100)))} onChange={(e) => setS('earlyUnlockFee', parseBRL(e.target.value))} inputMode="numeric" placeholder="0,00" disabled={!isMaster} /></div>
           <div className="field"><label>Intervalo mínimo (dias)</label><input type="number" value={settings.earlyUnlockCooldown} onChange={(e) => setS('earlyUnlockCooldown', e.target.value)} disabled={!isMaster} /></div>
           <div className="field"><label>Usos máximos (0 = ilimitado)</label><input type="number" value={settings.earlyUnlockMaxUses} onChange={(e) => setS('earlyUnlockMaxUses', e.target.value)} disabled={!isMaster} /></div>
           <h3 style={{ fontSize: 14 }}>Leilão programado</h3>
@@ -420,11 +421,16 @@ export default function AdminAuctions({ user }) {
               setErr('');
               setMsg('');
               try {
+                const date = parseBrDate(edForm.date);
+                if (!date) {
+                  setErr('Data inválida.');
+                  return;
+                }
                 const ed = await api('/api/admin/auctions/editions', {
                   method: 'POST',
                   body: JSON.stringify({
                     title: edForm.title,
-                    date: edForm.date,
+                    date,
                     number: edForm.number ? Number(edForm.number) : undefined,
                   }),
                 });
@@ -438,14 +444,23 @@ export default function AdminAuctions({ user }) {
             }}>
               <div className="field"><label>Número</label><input type="number" min="1" value={edForm.number} onChange={(e) => setEdForm({ ...edForm, number: e.target.value })} placeholder="Automático" /></div>
               <div className="field"><label>Nome</label><input value={edForm.title} onChange={(e) => setEdForm({ ...edForm, title: e.target.value })} placeholder="CATIRA LEILÃO #25" /></div>
-              <div className="field"><label>Data</label><input type="date" value={edForm.date} onChange={(e) => setEdForm({ ...edForm, date: e.target.value })} required /></div>
+              <div className="field">
+                <label>Data</label>
+                <input
+                  value={edForm.date}
+                  onChange={(e) => setEdForm({ ...edForm, date: formatBrDate(e.target.value) })}
+                  required
+                  inputMode="numeric"
+                  placeholder="dd/mm/aaaa"
+                />
+              </div>
               <button className="btn btn-primary">Criar edição</button>
             </form>
           )}
           <div className="chips" style={{ margin: '8px 0 12px' }}>
             {editions.map((ed) => (
               <button key={ed.id} type="button" className={'chip' + (editionId === ed.id ? ' on' : '')} onClick={() => setEditionId(ed.id)}>
-                #{ed.number} · {ed.date} · {ed.status === 'closed' ? 'encerrada' : ed.status === 'live' ? 'ao vivo' : (ed.lotCount + ' lotes')}
+                #{ed.number} · {isoToBrDate(ed.date)} · {ed.status === 'closed' ? 'encerrada' : ed.status === 'live' ? 'ao vivo' : (ed.lotCount + ' lotes')}
               </button>
             ))}
           </div>
@@ -464,7 +479,7 @@ export default function AdminAuctions({ user }) {
                     fd.append('title', lotForm.title);
                     fd.append('description', lotForm.description || lotForm.title);
                     fd.append('startingBid', String(lotForm.startingBid).replace(',', '.'));
-                    fd.append('minIncrement', String((lotForm.minIncrement || (settings && settings.minIncrement) || 1)).replace(',', '.'));
+                    fd.append('minIncrement', String(parseBRL(lotForm.minIncrement) || (settings && settings.minIncrement) || 1));
                     fd.append('durationMinutes', String(lotForm.durationMinutes || (settings && settings.sundayDefaultDurationMinutes) || 8));
                     fd.append('round', lotForm.round || 'main');
                     fd.append('finalLot', lotForm.round === 'final' ? 'true' : 'false');
@@ -514,7 +529,7 @@ export default function AdminAuctions({ user }) {
                   <div className="field"><label>Produto</label><input value={lotForm.title} onChange={(e) => setLotForm({ ...lotForm, title: e.target.value })} required /></div>
                   <div className="field"><label>Descrição</label><textarea rows={4} value={lotForm.description} onChange={(e) => setLotForm({ ...lotForm, description: e.target.value })} placeholder="Detalhes do produto, estado, medidas, observações." /></div>
                   <div className="field"><label>Lance inicial</label><input value={lotForm.startingBid} onChange={(e) => setLotForm({ ...lotForm, startingBid: e.target.value })} /></div>
-                  <div className="field"><label>Incremento (R$)</label><input value={lotForm.minIncrement} onChange={(e) => setLotForm({ ...lotForm, minIncrement: e.target.value })} placeholder={String((settings && settings.minIncrement) || 1)} /></div>
+                  <div className="field"><label>Incremento (R$)</label><input value={lotForm.minIncrement} onChange={(e) => setLotForm({ ...lotForm, minIncrement: formatBRLInput(e.target.value) })} placeholder={String((settings && settings.minIncrement) || 1)} /></div>
                   <div className="field"><label>Duração (min)</label><input type="number" min="1" value={lotForm.durationMinutes} onChange={(e) => setLotForm({ ...lotForm, durationMinutes: e.target.value })} placeholder={String((settings && settings.sundayDefaultDurationMinutes) || 8)} /></div>
                   <div className="field">
                     <label>Rodada</label>

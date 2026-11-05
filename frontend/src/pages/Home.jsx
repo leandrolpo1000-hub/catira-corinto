@@ -6,6 +6,7 @@ import { HomeAdBanner, ListingCard, SearchBox, Top } from '../components';
 import { useConfig } from '../config';
 import { useCity } from '../city';
 import { useAuth, isAdminRole } from '../auth';
+import { productPath } from '../productPath';
 
 const WEEKDAY_LABELS = ['DOMINGO', 'SEGUNDA', 'TERÇA', 'QUARTA', 'QUINTA', 'SEXTA', 'SÁBADO'];
 
@@ -264,7 +265,17 @@ export default function Home() {
           <h2>Anúncios recentes</h2>
           <Link to="/buscar">Ver todos</Link>
         </div>
-        <ListingCarousel items={recent} />
+        {!recent.length ? (
+          <div className="grid">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="card skeleton" aria-hidden="true">
+                <div className="thumb" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <ListingCarousel items={recent} />
+        )}
       </section>
 
       <section className="section">
@@ -285,7 +296,7 @@ export default function Home() {
           </div>
           <div className="want-list">
             {wants.map((it) => (
-              <Link key={it.id} to={'/anuncio/' + it.id} className="want-card">
+              <Link key={it.id} to={productPath(it)} className="want-card">
                 <span className="badge-want">PROCURO</span>
                 <strong>{it.title}</strong>
                 <div>Até {money(it.price)}</div>

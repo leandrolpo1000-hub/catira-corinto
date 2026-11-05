@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, formatBRLInput, parseBRL, listingTypes } from '../api';
 import { AccountButton, BrandLogo, CityChip, Empty, HomeAdBanner, ListingCard, ListingFeedCard, NeedAuth, SearchBox, Top, VoiceFab } from '../components';
@@ -6,8 +6,9 @@ import { useCity } from '../city';
 import { useAuth } from '../auth';
 import { Ico } from '../icons';
 import { CommentsSheet } from '../CommentsSheet';
+import { PAGE } from '../pageSize';
 
-const PAGE_SIZE = 24;
+const PAGE_SIZE = PAGE.search;
 const VIEW_KEY = 'catira.searchView';
 
 function readView() {
@@ -35,6 +36,10 @@ export default function Search() {
   const [reportFor, setReportFor] = useState(null);
   const [reason, setReason] = useState('golpe');
   const [desc, setDesc] = useState('');
+  const [minPrice, setMinPrice] = useState(sp.get('minPrice') || '');
+  const [maxPrice, setMaxPrice] = useState(sp.get('maxPrice') || '');
+  const priceTimer = useRef(0);
+  const priceRef = useRef({ minPrice: sp.get('minPrice') || '', maxPrice: sp.get('maxPrice') || '' });
   const { city, setCity } = useCity();
   const { user } = useAuth();
 
@@ -122,6 +127,26 @@ export default function Search() {
     setSp(next);
   }
 
+  useEffect(() => {
+    setMinPrice(filters.minPrice);
+    setMaxPrice(filters.maxPrice);
+    priceRef.current = { minPrice: filters.minPrice, maxPrice: filters.maxPrice };
+  }, [filters.minPrice, filters.maxPrice]);
+
+  useEffect(() => () => clearTimeout(priceTimer.current), []);
+
+  function onPrice(key, raw) {
+    const value = formatBRLInput(raw);
+    if (key === 'minPrice') setMinPrice(value);
+    else setMaxPrice(value);
+    priceRef.current = { ...priceRef.current, [key]: value };
+    clearTimeout(priceTimer.current);
+    priceTimer.current = setTimeout(() => {
+      const { minPrice, maxPrice } = priceRef.current;
+      apply({ minPrice, maxPrice });
+    }, 300);
+  }
+
   async function sendReport() {
     if (!reportFor) return;
     try {
@@ -192,8 +217,8 @@ export default function Search() {
               </select>
             </div>
             <div className="grid2">
-              <div className="field"><label>Preço mín.</label><input value={filters.minPrice} onChange={(e) => apply({ minPrice: formatBRLInput(e.target.value) })} inputMode="numeric" placeholder="0,00" /></div>
-              <div className="field"><label>Preço máx.</label><input value={filters.maxPrice} onChange={(e) => apply({ maxPrice: formatBRLInput(e.target.value) })} inputMode="numeric" placeholder="0,00" /></div>
+              <div className="field"><label>Preço mín.</label><input value={minPrice} onChange={(e) => onPrice('minPrice', e.target.value)} inputMode="numeric" placeholder="0,00" /></div>
+              <div className="field"><label>Preço máx.</label><input value={maxPrice} onChange={(e) => onPrice('maxPrice', e.target.value)} inputMode="numeric" placeholder="0,00" /></div>
             </div>
             <div className="field">
               <label>Tipo</label>

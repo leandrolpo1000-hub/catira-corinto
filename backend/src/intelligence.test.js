@@ -57,6 +57,38 @@ const viewDup = intelligence.trackEvent({
 });
 assert.strictEqual(viewDup.recorded, false);
 
+const viewsAfterDup = db.count('intelligenceEvents', (e) => e.type === 'view' && e.listingId === listing.id && e.actorHash === h1);
+const viewStillDup = intelligence.trackEvent({
+  type: 'view',
+  user: buyer,
+  listing,
+  sessionId: 'sid-1',
+});
+assert.strictEqual(viewStillDup.recorded, false);
+assert.strictEqual(
+  db.count('intelligenceEvents', (e) => e.type === 'view' && e.listingId === listing.id && e.actorHash === h1),
+  viewsAfterDup
+);
+
+const payBefore = db.count('intelligenceEvents', (e) => e.type === 'payment_confirmed');
+const paidNow = intelligence.trackEvent({
+  type: 'payment_confirmed',
+  user: buyer,
+  listing,
+  order: {
+    id: 'pay-immediate-1',
+    totalCents: 8000,
+    paymentMethod: 'pix',
+    address: { city: 'Corinto', cityId: 'corinto' },
+  },
+  sessionId: 'sid-pay-1',
+});
+assert.strictEqual(paidNow.recorded, true);
+assert.ok(paidNow.event);
+assert.strictEqual(paidNow.event.type, 'payment_confirmed');
+assert.ok(db.findById('intelligenceEvents', paidNow.event.id));
+assert.strictEqual(db.count('intelligenceEvents', (e) => e.type === 'payment_confirmed'), payBefore + 1);
+
 const adminView = intelligence.trackEvent({
   type: 'view',
   user: master,
@@ -73,6 +105,7 @@ const empty = intelligence.trackEvent({
 });
 assert.strictEqual(empty.recorded, true);
 assert.strictEqual(empty.event.resultCount, 0);
+if (typeof intelligence.flushPendingEvents === 'function') intelligence.flushPendingEvents();
 
 const catId = listing.categoryId;
 const demandBefore = intelligence.buildDashboard({ period: 'all', category: catId });
@@ -93,6 +126,7 @@ assert.strictEqual(searchWithDims.recorded, true);
 assert.strictEqual(searchWithDims.event.categoryId, catId);
 assert.strictEqual(searchWithDims.event.city, 'Corinto');
 assert.strictEqual(searchWithDims.event.cityId, 'corinto');
+if (typeof intelligence.flushPendingEvents === 'function') intelligence.flushPendingEvents();
 const storedSearch = db.findOne('intelligenceEvents', (e) => e.type === 'search' && e.query === 'furadeira geo');
 assert.ok(storedSearch);
 assert.strictEqual(storedSearch.categoryId, catId);
@@ -157,6 +191,41 @@ const demoFirst = intelligence.ensureDemoEvents();
 assert.ok(demoFirst && demoFirst.seeded === true);
 assert.ok(demoFirst.count > 20);
 const demoDash = intelligence.buildDashboard({ period: 'all' });
+assert.strictEqual(demoDash.series.length, 365);
+const seriesDay = demoDash.series[demoDash.series.length - 1].date;
+const dailyExtra = 17;
+db.insert('intelligenceDaily', {
+  id: seriesDay + '|view||||daily-series-extra',
+  day: seriesDay,
+  type: 'view',
+  cityId: null,
+  categoryId: null,
+  listingId: null,
+  query: null,
+  count: dailyExtra,
+});
+const seriesFromDaily = intelligence.buildDashboard({ period: 'all' });
+const lastSeries = seriesFromDaily.series.find((s) => s.date === seriesDay);
+assert.ok(lastSeries);
+assert.strictEqual(lastSeries.views, (demoDash.series[demoDash.series.length - 1].views || 0) + dailyExtra);
+if (!db.findById('cities', 'tres-marias')) {
+  db.insert('cities', { id: 'tres-marias', name: 'Três Marias', state: 'MG', slug: 'tres-marias-mg' });
+}
+const namedCityViews = 9;
+db.insert('intelligenceDaily', {
+  id: seriesDay + '|view|tres-marias|||name-city-series',
+  day: seriesDay,
+  type: 'view',
+  cityId: 'tres-marias',
+  categoryId: null,
+  listingId: null,
+  query: null,
+  count: namedCityViews,
+});
+const namedCityDash = intelligence.buildDashboard({ period: 'all', city: 'Três Marias' });
+const namedCityBucket = namedCityDash.series.find((s) => s.date === seriesDay);
+assert.ok(namedCityBucket);
+assert.ok(namedCityBucket.views >= namedCityViews);
 assert.ok(demoDash.stats.searches >= 8);
 assert.ok(demoDash.stats.emptySearches >= 3);
 assert.ok(demoDash.stats.views >= 5);
@@ -222,6 +291,7 @@ assert.strictEqual(
     session: 'sid-http',
   });
   assert.strictEqual(searched.status, 200);
+  if (typeof intelligence.flushPendingEvents === 'function') intelligence.flushPendingEvents();
   assert.ok(db.count('intelligenceEvents', (e) => e.type === 'search' && e.query && e.query.includes('furadeira')) > before);
 
   const viewed = await jsonRequest(server, {
@@ -231,6 +301,9 @@ assert.strictEqual(
     session: 'sid-http-view',
   });
   assert.strictEqual(viewed.status, 200);
+  assert.strictEqual(viewed.body.views, 1);
+  assert.strictEqual(db.findById('listings', listing.id).views || 0, 0);
+  if (typeof intelligence.flushPendingEvents === 'function') intelligence.flushPendingEvents();
   assert.ok(db.findOne('intelligenceEvents', (e) => e.type === 'view' && e.listingId === listing.id));
 
   const shared = await jsonRequest(server, {

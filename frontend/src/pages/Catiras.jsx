@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { Empty, ListingCard, Top } from '../components';
 import { useCity } from '../city';
+import { PAGE } from '../pageSize';
 
-const PAGE_SIZE = 24;
+const PAGE_SIZE = PAGE.search;
 
 export default function Catiras() {
   const [items, setItems] = useState([]);

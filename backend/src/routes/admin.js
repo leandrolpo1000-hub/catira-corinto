@@ -6,7 +6,8 @@ const bcrypt = require('bcryptjs');
 const { randomUUID } = require('crypto');
 const db = require('../db');
 const { adminRequired, masterRequired, publicUser, safeUser, isAdminRole } = require('../middleware');
-const { serializeListing, confirmPaymentRecord, normalizePromoCode, findPromo, expireStalePayments } = require('../helpers');
+const { serializeListing, confirmPaymentRecord, normalizePromoCode, findPromo, expireStalePayments, listingTypeOf, listingPlan, invalidateRanking, invalidateRankingIfListingStatus } = require('../helpers');
+const { pageSlice } = require('../pagination');
 const { getSettings, saveSettings } = require('../pix');
 const { publicMailSettings, saveMailSettings, sendTestEmail } = require('../mail');
 const { publicAssistantSettings, saveAssistantSettings } = require('../assistant');
@@ -203,24 +204,39 @@ router.put('/intelligence/settings', masterRequired, (req, res) => {
   res.json(require('../intelligence').updateSettings(req.body || {}));
 });
 
+function userRoleKey(u) {
+  if (u.role === 'master') return 'master';
+  if (u.role === 'admin') return 'admin';
+  const dealerStatus = require('../lance').dealerPublic(u).dealerStatus;
+  if (u.role === 'user' && dealerStatus === 'approved') return 'dealer';
+  return 'user';
+}
+
 router.get('/users', (req, res) => {
   const q = (req.query.q || '').toLowerCase();
   let list = db.all('users').filter((u) => !require('../official').isPlatformUser(u));
   if (q) {
     list = list.filter(
       (u) =>
-        u.name.toLowerCase().includes(q) ||
-        u.email.toLowerCase().includes(q) ||
-        (u.phone && u.phone.includes(q))
+        (u.name && u.name.toLowerCase().includes(q)) ||
+        (u.email && u.email.toLowerCase().includes(q)) ||
+        (u.phone && u.phone.includes(q)) ||
+        (u.city && u.city.toLowerCase().includes(q))
     );
   }
   if (req.query.status) list = list.filter((u) => u.status === req.query.status);
+  if (req.query.role) list = list.filter((u) => userRoleKey(u) === req.query.role);
+  const cities = Array.from(new Set(list.map((u) => u.city).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  if (req.query.city) list = list.filter((u) => u.city === req.query.city);
   list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const page = pageSlice(list, req.query);
   res.json({
-    items: list.map((u) => ({
+    ...page,
+    items: page.items.map((u) => ({
       ...publicUser(u),
-      listingsCount: db.count('listings', (l) => l.userId === u.id),
+      listingsCount: db.indexSize('listings', 'userId', u.id),
     })),
+    facets: { cities },
   });
 });
 
@@ -231,6 +247,7 @@ router.post('/users/:id/status', (req, res) => {
   const status = req.body && req.body.status;
   if (!['active', 'blocked'].includes(status)) return res.status(400).json({ error: 'Status inválido.' });
   const updated = db.update('users', u.id, { status });
+  if (u.status !== status && (u.status === 'blocked' || status === 'blocked')) invalidateRanking();
   res.json(publicUser(updated));
 });
 
@@ -244,15 +261,59 @@ router.post('/users/:id/role', masterRequired, (req, res) => {
   res.json(publicUser(updated));
 });
 
+function listingSeller(l, cache) {
+  if (!l || !l.userId) return null;
+  if (cache.has(l.userId)) return cache.get(l.userId);
+  const u = db.findById('users', l.userId) || null;
+  cache.set(l.userId, u);
+  return u;
+}
+
 router.get('/listings', (req, res) => {
   expireStalePayments();
   // Produtos oficiais têm gestão própria na aba Oficial.
   let list = db.all('listings').filter((l) => !require('../official').isOfficialListing(l));
   if (req.query.status) list = list.filter((l) => l.status === req.query.status);
   const q = (req.query.q || '').toLowerCase();
-  if (q) list = list.filter((l) => l.title.toLowerCase().includes(q));
+  const sellerCache = new Map();
+  if (q) {
+    list = list.filter((l) => {
+      const seller = listingSeller(l, sellerCache);
+      const hay = [
+        l.title,
+        l.city,
+        l.id,
+        listingTypeOf(l),
+        seller && seller.name,
+        seller && seller.email,
+      ].join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  if (req.query.type) list = list.filter((l) => listingTypeOf(l) === req.query.type);
+  if (req.query.plan) list = list.filter((l) => listingPlan(l) === req.query.plan);
+  if (req.query.quick === '1' || req.query.quick === 'true') {
+    list = list.filter((l) => !!l.quickOfferEnabled);
+  }
+  const cities = Array.from(new Set(list.map((l) => l.city).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const sellers = Array.from(new Set(list.map((l) => {
+    const seller = listingSeller(l, sellerCache);
+    return (seller && seller.name) || '';
+  }).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  if (req.query.city) list = list.filter((l) => l.city === req.query.city);
+  if (req.query.seller) {
+    list = list.filter((l) => {
+      const seller = listingSeller(l, sellerCache);
+      return seller && seller.name === req.query.seller;
+    });
+  }
   list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  res.json({ items: list.map((l) => serializeListing(l, { user: req.user })) });
+  const page = pageSlice(list, req.query);
+  res.json({
+    ...page,
+    items: page.items.map((l) => serializeListing(l, { user: req.user })),
+    facets: { cities, sellers },
+  });
 });
 
 router.post('/listings/:id/action', officialListingGuard, (req, res) => {
@@ -291,6 +352,7 @@ router.post('/listings/:id/action', officialListingGuard, (req, res) => {
   }
   else return res.status(400).json({ error: 'Ação inválida.' });
   const updated = db.update('listings', l.id, patch);
+  invalidateRankingIfListingStatus(l.status, updated && updated.status);
   if (updated && updated.status === 'published' && action === 'approve') {
     const { notifyAlerts } = require('../helpers');
     notifyAlerts(updated);
@@ -327,21 +389,26 @@ router.put('/listings/:id', officialListingGuard, (req, res) => {
   });
   if (patch.price !== undefined) patch.price = Number(patch.price);
   const updated = db.update('listings', l.id, patch);
+  invalidateRankingIfListingStatus(l.status, updated && updated.status);
   res.json(serializeListing(updated, { user: req.user }));
 });
 
-router.get('/reports', (_req, res) => {
-  const items = db
+router.get('/reports', (req, res) => {
+  const list = db
     .all('reports')
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .map((r) => ({
-      ...r,
-      listing: db.findById('listings', r.listingId)
-        ? serializeListing(db.findById('listings', r.listingId))
-        : null,
-      reporter: safeUser(db.findById('users', r.reporterId)),
-    }));
-  res.json({ items });
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const page = pageSlice(list, req.query);
+  res.json({
+    ...page,
+    items: page.items.map((r) => {
+      const listing = r.listingId ? db.findById('listings', r.listingId) : null;
+      return {
+        ...r,
+        listing: listing ? serializeListing(listing) : null,
+        reporter: safeUser(db.findById('users', r.reporterId)),
+      };
+    }),
+  });
 });
 
 router.post('/reports/:id/status', (req, res) => {
@@ -418,11 +485,27 @@ router.get('/publications', (req, res) => {
   let list = db.all('listings');
   if (status) list = list.filter((l) => l.status === status);
   list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-  const items = list
-    .map((l) => {
+  if (q) {
+    list = list.filter((l) => {
       const u = db.findById('users', l.userId);
-      const row = {
+      const hay = [
+        u && u.name,
+        u && u.email,
+        u && u.phone,
+        l.city || (u && u.city),
+        l.id,
+        String(l.id).slice(0, 8),
+        l.title,
+      ].join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  const page = pageSlice(list, req.query);
+  res.json({
+    ...page,
+    items: page.items.map((l) => {
+      const u = db.findById('users', l.userId);
+      return {
         listingId: l.id,
         listingCode: String(l.id).slice(0, 8).toUpperCase(),
         title: l.title,
@@ -437,17 +520,8 @@ router.get('/publications', (req, res) => {
         address: l.city || (u ? u.city : ''),
         city: l.city || (u ? u.city : ''),
       };
-      return row;
-    })
-    .filter((r) => {
-      if (!q) return true;
-      const hay = [r.name, r.email, r.phone, r.address, r.listingId, r.listingCode, r.title]
-        .join(' ')
-        .toLowerCase();
-      return hay.includes(q);
-    });
-
-  res.json({ items, total: items.length });
+    }),
+  });
 });
 
 function pixPublic(s) {
@@ -629,24 +703,26 @@ router.post('/payments/:id/reject', (req, res) => {
   res.json({ ok: true });
 });
 
-router.get('/payments', (_req, res) => {
+router.get('/payments', (req, res) => {
   expireStalePayments();
-  const items = db
+  const list = db
     .all('payments')
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .map((p) => {
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const page = pageSlice(list, req.query);
+  res.json({
+    ...page,
+    items: page.items.map((p) => {
       const u = db.findById('users', p.userId);
+      const listing = p.listingId ? db.findById('listings', p.listingId) : null;
       return {
         ...p,
         user: u
           ? { ...safeUser(u), email: u.email, phone: u.phone }
           : null,
-        listing: db.findById('listings', p.listingId)
-          ? serializeListing(db.findById('listings', p.listingId))
-          : null,
+        listing: listing ? serializeListing(listing) : null,
       };
-    });
-  res.json({ items });
+    }),
+  });
 });
 
 router.get('/promos', (_req, res) => {
@@ -683,21 +759,22 @@ router.post('/promos', (req, res) => {
   res.status(201).json(row);
 });
 
-router.get('/reviews', (_req, res) => {
-  const userReviews = db.all('reviews').map((r) => ({
-    ...r,
-    kind: 'user',
-    reviewer: safeUser(db.findById('users', r.reviewerId)),
-    listing: db.findById('listings', r.listingId) ? serializeListing(db.findById('listings', r.listingId)) : null,
-  }));
-  const listingReviews = db.all('listingReviews').map((r) => ({
-    ...r,
-    kind: 'listing',
-    reviewer: safeUser(db.findById('users', r.userId)),
-    listing: db.findById('listings', r.listingId) ? serializeListing(db.findById('listings', r.listingId)) : null,
-  }));
-  const items = userReviews.concat(listingReviews).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  res.json({ items });
+router.get('/reviews', (req, res) => {
+  const userReviews = db.all('reviews').map((r) => ({ ...r, kind: 'user' }));
+  const listingReviews = db.all('listingReviews').map((r) => ({ ...r, kind: 'listing' }));
+  const list = userReviews.concat(listingReviews).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const page = pageSlice(list, req.query);
+  res.json({
+    ...page,
+    items: page.items.map((r) => {
+      const listing = r.listingId ? db.findById('listings', r.listingId) : null;
+      return {
+        ...r,
+        reviewer: safeUser(db.findById('users', r.kind === 'listing' ? r.userId : r.reviewerId)),
+        listing: listing ? serializeListing(listing) : null,
+      };
+    }),
+  });
 });
 
 router.delete('/reviews/:id', (req, res) => {
@@ -844,7 +921,7 @@ require('./orders').attachAdmin(router);
 router.get('/official/products', officialHandler((req) => {
   const official = require('../official');
   official.ensureOfficialSeller();
-  return { items: official.listProducts(req.query), providers: official.PROVIDERS, providerLabels: official.PROVIDER_LABEL };
+  return { ...official.listProducts(req.query), providers: official.PROVIDERS, providerLabels: official.PROVIDER_LABEL };
 }));
 
 router.post('/official/products', officialHandler((req) => {

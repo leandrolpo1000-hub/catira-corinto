@@ -5,6 +5,7 @@ import { useAuth, isAdminRole } from '../auth';
 import { useTheme } from '../theme';
 import { BrandLogo, NeedAuth, Top } from '../components';
 import { useConfig } from '../config';
+import { formatPhoneBr } from '../masks';
 
 const WEEKDAYS = [
   { v: 0, l: 'Domingo' },
@@ -94,7 +95,7 @@ export default function Profile() {
 
   useEffect(() => {
     if (!user) return;
-    setForm({ name: user.name, phone: user.phone, city: user.city });
+    setForm({ name: user.name, phone: formatPhoneBr(user.phone), city: user.city });
     api('/api/users/' + user.id).then(setStats).catch(() => {});
     const reqs = [
       api('/api/listings/notices').then((d) => (d.items || []).map((n) => ({ ...n, href: '/buscar', kind: 'anúncio' }))),
@@ -160,7 +161,16 @@ export default function Profile() {
         {edit && (
           <form onSubmit={save} style={{ marginBottom: 16 }}>
             <div className="field"><label>Nome</label><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-            <div className="field"><label>Telefone</label><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
+            <div className="field">
+              <label>Telefone</label>
+              <input
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: formatPhoneBr(e.target.value) })}
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="(38) 99999-9999"
+              />
+            </div>
             <div className="field"><label>Cidade</label><input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></div>
             <button className="btn btn-primary">Salvar</button>
           </form>

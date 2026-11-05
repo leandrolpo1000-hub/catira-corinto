@@ -1,4 +1,5 @@
 const db = require('./db');
+const { pageSlice } = require('./pagination');
 
 const PLATFORM_ROLE = 'platform';
 const PLATFORM_EMAIL = 'catira.oficial@catira.com';
@@ -851,7 +852,8 @@ function listProducts(query = {}) {
     });
   }
   rows.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  return rows.map((p) => serializeProduct(p, { now }));
+  const page = pageSlice(rows, query);
+  return { ...page, items: page.items.map((p) => serializeProduct(p, { now })) };
 }
 
 function isEligibleForAlerts() {

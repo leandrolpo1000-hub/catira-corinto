@@ -249,7 +249,7 @@ async function run() {
     assert.strictEqual(adminPix.order.pixQrcode, undefined, 'admin não expõe QR');
     assert.ok(Array.isArray(adminPix.events));
     assert.ok(adminPix.events.some((e) => e.toStatus === 'paid' || e.type === 'order.transitioned'));
-    const listedPix = orders.listOrdersAdmin().find((o) => o.id === pixOrder.order.id);
+    const listedPix = orders.listOrdersAdmin({ limit: 50 }).items.find((o) => o.id === pixOrder.order.id);
     assert.strictEqual(listedPix.paymentMethod, 'pix');
     assert.strictEqual(listedPix.appmaxOrderId, 99);
     assert.strictEqual(listedPix.appmaxPaymentStatus, 'aprovado');

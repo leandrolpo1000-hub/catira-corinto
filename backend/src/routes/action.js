@@ -158,7 +158,7 @@ router.delete('/:id/comments/:commentId', authRequired, (req, res) => {
 });
 
 adminRouter.get('/', (req, res) => {
-  res.json(action.listAdmin({ status: req.query.status }));
+  res.json(action.listAdmin(req.query));
 });
 
 adminRouter.post('/:id/action', (req, res) => {

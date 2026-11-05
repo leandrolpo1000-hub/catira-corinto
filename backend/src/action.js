@@ -1,6 +1,7 @@
 const db = require('./db');
 const { safeUser, isAdminRole } = require('./middleware');
 const { timeAgo, imagesOf } = require('./helpers');
+const { pageSlice } = require('./pagination');
 
 const DONE_STATUSES = ['sold', 'traded', 'negotiated'];
 const TEXT_MAX = 500;
@@ -277,7 +278,8 @@ function listAdmin(query) {
   let rows = db.all('actionPosts');
   if (status) rows = rows.filter((p) => p.status === status);
   rows.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  return { items: rows.map((p) => serializePost(p, { admin: true })), total: rows.length };
+  const page = pageSlice(rows, query);
+  return { ...page, items: page.items.map((p) => serializePost(p, { admin: true })) };
 }
 
 function moderatePost(id, action) {

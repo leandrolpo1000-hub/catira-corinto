@@ -7,6 +7,7 @@ import { useTheme } from './theme';
 import { useConfig } from './config';
 import { useCity } from './city';
 import { resolveVoiceCommand, buildSearchUrl, voiceHelpExamples } from './voiceCommands';
+import { productPath } from './productPath';
 
 const Shell = createContext(null);
 function useShell() {
@@ -19,6 +20,8 @@ export function Layout({ children }) {
   const { auctionEnabled } = useConfig();
   const [menuOpen, setMenuOpen] = useState(false);
   const [unread, setUnread] = useState(0);
+  const pathRef = useRef(loc.pathname);
+  pathRef.current = loc.pathname;
   const hideNav = loc.pathname.startsWith('/admin') || loc.pathname.startsWith('/chat/') || loc.pathname.startsWith('/checkout');
   const hideFoot = hideNav || loc.pathname === '/em-acao' || loc.pathname.startsWith('/buscar');
   const admin = loc.pathname.startsWith('/admin');
@@ -29,20 +32,25 @@ export function Layout({ children }) {
   useEffect(() => {
     if (!user) {
       setUnread(0);
-      return;
+      return undefined;
     }
-    if (loc.pathname === '/perfil') {
-      setUnread(0);
-      return;
+    function fetchNotices() {
+      if (pathRef.current === '/perfil') {
+        setUnread(0);
+        return;
+      }
+      const reqs = [
+        api('/api/listings/notices'),
+        api('/api/acao/notices'),
+      ];
+      if (auctionEnabled) reqs.push(api('/api/auctions/notifications'));
+      Promise.all(reqs.map((p) => p.then((d) => d.unread || 0).catch(() => 0)))
+        .then((parts) => setUnread(parts.reduce((a, b) => a + b, 0)));
     }
-    const reqs = [
-      api('/api/listings/notices'),
-      api('/api/acao/notices'),
-    ];
-    if (auctionEnabled) reqs.push(api('/api/auctions/notifications'));
-    Promise.all(reqs.map((p) => p.then((d) => d.unread || 0).catch(() => 0)))
-      .then((parts) => setUnread(parts.reduce((a, b) => a + b, 0)));
-  }, [user, loc.pathname, auctionEnabled]);
+    fetchNotices();
+    const t = setInterval(fetchNotices, 60000);
+    return () => clearInterval(t);
+  }, [user, auctionEnabled]);
 
   return (
     <Shell.Provider value={{ menuOpen, setMenuOpen, unread, setUnread }}>
@@ -455,12 +463,12 @@ export function officialLocation(item) {
 }
 
 export function ListingCard({ item }) {
-  const img = item.images?.[0]?.url;
+  const img = item.images?.[0]?.thumbUrl || item.images?.[0]?.url;
   return (
     <article className={'card' + (item.featured ? ' featured' : '') + (item.isOfficial ? ' is-official' : '')}>
-      <Link to={'/anuncio/' + item.id}>
+      <Link to={productPath(item)}>
         <div className="thumb">
-          {img && <img src={img} alt={item.title} />}
+          {img && <img src={img} alt={item.title} width={400} height={300} loading="lazy" />}
           {item.isOfficial ? (
             <span className="badge-official">CATIRA OFICIAL</span>
           ) : item.listingType === 'procuro' ? (
@@ -526,7 +534,7 @@ export function ListingFeedCard({ item, user, onChange, onOpenComments, onReport
         )}
         <p className="acao-ig-cap"><strong>CATIRA OFICIAL</strong> {shown}</p>
         <p className="acao-ig-price">{priceText(item)}</p>
-        <Link to={'/anuncio/' + item.id} className="acao-ig-view-ad">Ver produto</Link>
+        <Link to={productPath(item)} className="acao-ig-view-ad">Ver produto</Link>
         <p className="acao-ig-time">Produto vendido pela plataforma</p>
       </article>
     );
@@ -592,10 +600,10 @@ export function ListingFeedCard({ item, user, onChange, onOpenComments, onReport
 }
 
 export function ListingRow({ item, extra }) {
-  const img = item.images?.[0]?.url;
+  const img = item.images?.[0]?.thumbUrl || item.images?.[0]?.url;
   return (
-    <Link to={'/anuncio/' + item.id} className="list-item">
-      {img && <img src={img} alt="" />}
+    <Link to={productPath(item)} className="list-item">
+      {img && <img src={img} alt={item.title} width={400} height={300} loading="lazy" />}
       <div>
         <h3>{item.title}</h3>
         <div className="price">{priceText(item)}</div>

@@ -3,6 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, money } from '../api';
 import { useAuth, isAdminRole } from '../auth';
 import { NeedAuth, PhotoGallery, Top } from '../components';
+import { formatPhoneBr } from '../masks';
+import { PAGE } from '../pageSize';
 
 const STATUS_CHIP = [
   ['', 'Todas'],
@@ -22,7 +24,7 @@ export function DealerApply() {
   const [form, setForm] = useState({
     name: user?.name || '',
     city: user?.city || 'Corinto',
-    phone: user?.phone || '',
+    phone: formatPhoneBr(user?.phone || ''),
     categories: [],
     regions: [],
     termsAccepted: false,
@@ -78,7 +80,17 @@ export function DealerApply() {
           <form onSubmit={submit}>
             <div className="field"><label>Nome</label><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
             <div className="field"><label>Cidade</label><input value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} required /></div>
-            <div className="field"><label>Telefone</label><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} required /></div>
+            <div className="field">
+              <label>Telefone</label>
+              <input
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: formatPhoneBr(e.target.value) })}
+                required
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="(38) 99999-9999"
+              />
+            </div>
             <div className="field">
               <label>Categorias de interesse</label>
               <div className="cond wrap">
@@ -131,6 +143,20 @@ export default function LanceHub() {
   const [err, setErr] = useState('');
   const [mine, setMine] = useState([]);
   const [allowed, setAllowed] = useState(null);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [mineTotal, setMineTotal] = useState(0);
+  const [minePage, setMinePage] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const pageSize = PAGE.favorites;
+
+  function hubUrl(nextPage) {
+    const qs = new URLSearchParams();
+    qs.set('page', String(nextPage));
+    qs.set('limit', String(pageSize));
+    if (status) qs.set('status', status);
+    return '/api/lance/hub?' + qs.toString();
+  }
 
   async function load() {
     const me = await api('/api/lance/me');
@@ -139,10 +165,14 @@ export default function LanceHub() {
       return;
     }
     setAllowed(true);
-    const d = await api('/api/lance/hub' + (status ? '?status=' + encodeURIComponent(status) : ''));
+    const d = await api(hubUrl(1));
     setItems(d.items || []);
-    const h = await api('/api/lance/mine');
+    setTotal(d.total || 0);
+    setPage(1);
+    const h = await api('/api/lance/mine?page=1&limit=' + pageSize);
     setMine(h.items || []);
+    setMineTotal(h.total || 0);
+    setMinePage(1);
   }
 
   useEffect(() => {
@@ -175,6 +205,21 @@ export default function LanceHub() {
             </div>
             {!items.length && <p className="empty">Nenhuma oportunidade no momento.</p>}
             {items.map((it) => <OppCard key={it.id} item={it} onDone={load} />)}
+            {items.length < total && (
+              <button className="btn btn-ghost" style={{ marginTop: 16 }} disabled={loading} onClick={async () => {
+                setLoading(true);
+                try {
+                  const next = page + 1;
+                  const d = await api(hubUrl(next));
+                  setItems((prev) => prev.concat(d.items || []));
+                  setTotal(d.total || 0);
+                  setPage(next);
+                } catch { /* keep current list */ }
+                setLoading(false);
+              }}>
+                {loading ? 'Carregando...' : 'Ver mais'}
+              </button>
+            )}
           </>
         )}
         {tab === 'mine' && (
@@ -186,6 +231,21 @@ export default function LanceHub() {
                 {row.opportunity && <OppCard item={row.opportunity} onDone={load} compact />}
               </div>
             ))}
+            {mine.length < mineTotal && (
+              <button className="btn btn-ghost" style={{ marginTop: 16 }} disabled={loading} onClick={async () => {
+                setLoading(true);
+                try {
+                  const next = minePage + 1;
+                  const h = await api('/api/lance/mine?page=' + next + '&limit=' + pageSize);
+                  setMine((prev) => prev.concat(h.items || []));
+                  setMineTotal(h.total || 0);
+                  setMinePage(next);
+                } catch { /* keep current list */ }
+                setLoading(false);
+              }}>
+                {loading ? 'Carregando...' : 'Ver mais'}
+              </button>
+            )}
           </>
         )}
       </div>

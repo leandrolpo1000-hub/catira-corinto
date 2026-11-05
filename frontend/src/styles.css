@@ -634,6 +634,7 @@ button.link { background: none; border: 0; padding: 0; cursor: pointer; font-fam
   height: 124px; background: #222; position: relative; overflow: hidden;
 }
 .thumb img { width: 100%; height: 100%; object-fit: cover; }
+.skeleton .thumb { background: #d8d0c8; }
 .badge-trade {
   position: absolute; left: 8px; top: 8px;
   background: var(--catira); color: #fff;
@@ -2562,3 +2563,27 @@ html[data-theme="dark"] .chat-bubble.mine .chat-meta span { color: #a8d8c4; }
   border-radius: 14px; padding: 12px; font-weight: 700; text-align: center;
 }
 .ck-method.on { border-color: var(--brand); color: var(--brand); background: var(--brand-soft); }
+
+.pdp { padding-bottom: calc(88px + var(--nav-h) + var(--safe-b)); background: #fff; }
+.pdp-gallery { position: relative; background: #FFF8F0; aspect-ratio: 1 / 1; overflow: hidden; }
+.pdp-gallery img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.pdp-icon { position: absolute; top: 12px; width: 44px; height: 44px; border: 0; border-radius: 22px; background: #fff; color: #1a1a1a; font-size: 22px; cursor: pointer; }
+.pdp-back { left: 12px; }
+.pdp-share { right: 12px; }
+.pdp-count { position: absolute; right: 12px; bottom: 12px; background: rgba(0,0,0,.55); color: #fff; font-size: 12px; padding: 4px 8px; border-radius: 12px; }
+.pdp-dots { position: absolute; left: 0; right: 0; bottom: 10px; display: flex; justify-content: center; gap: 6px; }
+.pdp-dots button { width: 8px; height: 8px; border-radius: 4px; border: 0; background: #ccc; padding: 0; cursor: pointer; }
+.pdp-dots button.on { background: #E85D04; }
+.pdp-body { padding: 16px 16px 24px; }
+.pdp-title { font-size: 18px; line-height: 1.35; margin: 10px 0 8px; font-weight: 700; }
+.pdp-price { display: flex; align-items: baseline; gap: 8px; margin-bottom: 12px; }
+.pdp-price strong { font-size: 28px; color: #1a1a1a; }
+.pdp-price s { color: #888; font-size: 14px; }
+.pdp-eta { margin: 8px 0 16px; }
+.pdp-eta-line { color: #2D6A4F; font-weight: 700; font-size: 16px; margin: 0 0 4px; }
+.pdp-buy { width: 100%; }
+.pdp-ml { margin-top: 20px; padding-top: 16px; border-top: 1px solid #eee; }
+.pdp-ml p { margin: 0 0 8px; color: #444; }
+.pdp-desc { margin-top: 20px; line-height: 1.5; white-space: pre-wrap; }
+.pdp-cta { position: sticky; bottom: calc(var(--nav-h) + var(--safe-b)); padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: #fff; border-top: 1px solid #eee; z-index: 20; }
+.pdp-cta .btn { width: 100%; }

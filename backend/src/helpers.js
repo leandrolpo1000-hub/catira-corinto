@@ -1,5 +1,10 @@
+const fs = require('fs');
+const path = require('path');
 const db = require('./db');
 const { safeUser, isAdminRole } = require('./middleware');
+const { ensureThumbLater, thumbUrlIfExists } = require('./thumbs');
+
+const UPLOADS = path.join(__dirname, '..', 'uploads');
 
 function timeAgo(iso) {
   if (!iso) return '';
@@ -18,9 +23,26 @@ function timeAgo(iso) {
 }
 
 function imagesOf(listingId) {
-  return db
-    .findWhere('listingImages', (i) => i.listingId === listingId)
-    .sort((a, b) => (a.order || 0) - (b.order || 0));
+  return db.byFk('listingImages', 'listingId', listingId)
+    .slice()
+    .sort((a, b) => (a.order || 0) - (b.order || 0))
+    .map((img) => {
+      let thumbUrl = img.thumbUrl;
+      if (!thumbUrl && img.url && img.url.startsWith('/uploads/')) {
+        const rel = img.url.replace(/^\/uploads\//, '');
+        const abs = path.join(UPLOADS, rel);
+        const ready = thumbUrlIfExists(abs, img.url);
+        if (ready) {
+          db.update('listingImages', img.id, { thumbUrl: ready });
+          thumbUrl = ready;
+        } else if (fs.existsSync(abs)) {
+          ensureThumbLater(abs, img.url, (generated) => {
+            db.update('listingImages', img.id, { thumbUrl: generated });
+          });
+        }
+      }
+      return { ...img, url: img.url, thumbUrl: thumbUrl || img.url };
+    });
 }
 
 function categoryOf(id) {
@@ -28,7 +50,7 @@ function categoryOf(id) {
 }
 
 function listingRating(listingId, userId) {
-  const rows = db.findWhere('listingReviews', (r) => r.listingId === listingId);
+  const rows = db.byFk('listingReviews', 'listingId', listingId);
   const count = rows.length;
   const avg = count
     ? Math.round((rows.reduce((s, r) => s + Number(r.rating || 0), 0) / count) * 10) / 10
@@ -63,8 +85,8 @@ function listingTypeLabel(type) {
 }
 
 function listingSocialOf(listingId, viewerId) {
-  const likes = db.findWhere('listingLikes', (x) => x.listingId === listingId);
-  const comments = db.findWhere('listingComments', (c) => c.listingId === listingId);
+  const likes = db.byFk('listingLikes', 'listingId', listingId);
+  const comments = db.byFk('listingComments', 'listingId', listingId);
   return {
     likeCount: likes.length,
     commentCount: comments.length,
@@ -86,6 +108,7 @@ function serializeListing(l, opts = {}) {
     ? { likeCount: 0, commentCount: 0, liked: false }
     : listingSocialOf(l.id, opts.userId);
   const viewer = opts.user || (opts.userId ? db.findById('users', opts.userId) : null);
+  const pay = (viewer && (viewer.id === l.userId || isAdminRole(viewer.role))) ? listingPayment(l.id) : null;
   const vip = isOfficial ? false : !!l.vip;
   const listingType = listingTypeOf(l);
   const acceptsTrade = listingType === 'troca' || listingType === 'venda_troca' || !!l.acceptsTrade;
@@ -107,8 +130,8 @@ function serializeListing(l, opts = {}) {
     acceptsCash: !!l.acceptsCash,
     tradeWishes: l.tradeWishes || '',
     status: l.status,
-    paymentStatus: (viewer && (viewer.id === l.userId || isAdminRole(viewer.role))) ? ((listingPayment(l.id) || {}).status || '') : '',
-    paymentDeclaredAt: (viewer && (viewer.id === l.userId || isAdminRole(viewer.role))) ? ((listingPayment(l.id) || {}).userDeclaredAt || null) : null,
+    paymentStatus: pay ? (pay.status || '') : '',
+    paymentDeclaredAt: pay ? (pay.userDeclaredAt || null) : null,
     plan: listingPlan(l),
     adminNote: (viewer && (viewer.id === l.userId || isAdminRole(viewer.role))) ? (l.adminNote || '') : '',
     previousStatus: (viewer && (viewer.id === l.userId || isAdminRole(viewer.role))) ? (l.previousStatus || '') : '',
@@ -122,7 +145,7 @@ function serializeListing(l, opts = {}) {
     waitForEvaluation: isOfficial ? false : ((viewer && (viewer.id === l.userId || isAdminRole(viewer.role))) ? !!l.waitForEvaluation : undefined),
     contactLocked: isOfficial,
     views: l.views || 0,
-    favoritesCount: db.count('favorites', (f) => f.listingId === l.id),
+    favoritesCount: db.indexSize('favorites', 'listingId', l.id),
     likeCount: social.likeCount,
     commentCount: social.commentCount,
     liked: social.liked,
@@ -217,7 +240,7 @@ function listingPlan(l) {
 }
 
 function listingPayment(listingId) {
-  const rows = db.findWhere('payments', (p) => p && p.listingId === listingId);
+  const rows = db.byFk('payments', 'listingId', listingId);
   if (!rows.length) return null;
   const open = rows
     .filter((p) => p.status !== 'paid' && p.status !== 'rejected' && p.status !== 'expired')
@@ -320,6 +343,7 @@ function confirmPaymentRecord(payment, listing, opts = {}) {
     patch.featuredUntil = patch.premiumUntil;
   }
   const updated = db.update('listings', listing.id, patch);
+  invalidateRankingIfListingStatus(listing.status, updated && updated.status);
   if (publish) notifyAlerts(updated);
   return updated;
 }
@@ -350,13 +374,13 @@ function notifyAlerts(listing) {
 function sellerScore(user) {
   if (!user) return { score: 0, published: 0, sold: 0, deals: 0, views: 0, favorites: 0 };
   if (user.role === 'platform') return { score: 0, published: 0, sold: 0, deals: 0, views: 0, favorites: 0 };
-  const listings = db.findWhere('listings', (l) => l.userId === user.id);
+  const listings = db.byFk('listings', 'userId', user.id);
   const published = listings.filter((l) => l.status === 'published').length;
   const sold = listings.filter((l) => l.status === 'sold' || l.status === 'traded' || l.status === 'negotiated').length;
   const deals = sold;
   const views = listings.reduce((s, l) => s + (l.views || 0), 0);
   const favorites = listings.reduce(
-    (s, l) => s + db.count('favorites', (f) => f.listingId === l.id),
+    (s, l) => s + db.indexSize('favorites', 'listingId', l.id),
     0
   );
   const ratingPts = (Number(user.ratingAvg) || 0) * (Number(user.ratingCount) || 0);
@@ -374,8 +398,30 @@ function sellerScore(user) {
   return { score, published, sold, deals, views, favorites, listingsCount: listings.length };
 }
 
+const RANKING_TTL_MS = 30_000;
+const RANKING_STATUSES = new Set(['published', 'sold', 'traded']);
+let rankingCache = null;
+let rankingBuiltAt = 0;
+
+function invalidateRanking() {
+  rankingCache = null;
+  rankingBuiltAt = 0;
+}
+
+function listingStatusAffectsRanking(prev, next) {
+  if (prev === next) return false;
+  return RANKING_STATUSES.has(prev) || RANKING_STATUSES.has(next);
+}
+
+function invalidateRankingIfListingStatus(prev, next) {
+  if (listingStatusAffectsRanking(prev, next)) invalidateRanking();
+}
+
 function rankedSellers() {
-  return db
+  if (rankingCache && Date.now() - rankingBuiltAt < RANKING_TTL_MS) {
+    return rankingCache;
+  }
+  rankingCache = db
     .findWhere('users', (u) => u.status !== 'blocked' && u.role !== 'platform' && !u.systemAccount)
     .map((u) => {
       const stats = sellerScore(u);
@@ -392,6 +438,8 @@ function rankedSellers() {
     .filter((u) => u.published + u.sold > 0)
     .sort((a, b) => b.score - a.score || b.published - a.published)
     .map((u, i) => ({ ...u, rank: i + 1 }));
+  rankingBuiltAt = Date.now();
+  return rankingCache;
 }
 
 function rankOf(userId) {
@@ -413,6 +461,9 @@ module.exports = {
   sellerScore,
   rankedSellers,
   rankOf,
+  invalidateRanking,
+  listingStatusAffectsRanking,
+  invalidateRankingIfListingStatus,
   listingRating,
   categoryOf,
   normalizePromoCode,

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { api, money, reportReasons, typeLabel, priceText, formatBRLInput, parseBRL } from '../api';
 import { useAuth } from '../auth';
 import { conditionText, HomeAdBanner, officialLocation, Top } from '../components';
@@ -43,6 +43,8 @@ export default function Listing() {
     return <><Top back /><div className="page"><div className="error">{err}</div></div></>;
   }
   if (!item) return <><Top back /><div className="page">Carregando...</div></>;
+
+  if (item.isOfficial) return <Navigate to={'/produto/' + item.id} replace />;
 
   const mine = user && user.id === item.userId;
   const img = item.images?.[idx]?.url || item.images?.[0]?.url;
@@ -135,9 +137,9 @@ export default function Listing() {
     setShowTrade(true);
     setTradeErr('');
     if (!user) return;
-    api('/api/listings/mine')
+    api('/api/listings/mine?status=published&limit=50')
       .then((d) => {
-        const mineActive = (d.items || []).filter((l) => l.status === 'published' && l.id !== item.id && l.listingType !== 'procuro');
+        const mineActive = (d.items || []).filter((l) => l.id !== item.id && l.listingType !== 'procuro');
         setMyListings(mineActive);
       })
       .catch(() => setMyListings([]));

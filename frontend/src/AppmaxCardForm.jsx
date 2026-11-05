@@ -50,6 +50,13 @@ export default function AppmaxCardForm({
     e.preventDefault();
   }
 
+  function keepDigits(max) {
+    return (e) => {
+      const next = String(e.target.value || '').replace(/\D/g, '').slice(0, max);
+      if (e.target.value !== next) e.target.value = next;
+    };
+  }
+
   return (
     <>
       <form data-appmax-customer hidden />
@@ -59,11 +66,11 @@ export default function AppmaxCardForm({
         onSubmit={onSubmit}
         className={visible ? '' : 'hidden'}
       >
-        <input required name="card-number" placeholder="Número do cartão" inputMode="numeric" autoComplete="cc-number" />
+        <input required name="card-number" placeholder="0000 0000 0000 0000" inputMode="numeric" autoComplete="cc-number" maxLength={16} onInput={keepDigits(16)} />
         <input required name="card-holder-name" placeholder="Nome impresso no cartão" autoComplete="cc-name" />
-        <input required name="exp-month" placeholder="MM" inputMode="numeric" autoComplete="cc-exp-month" />
-        <input required name="exp-year" placeholder="AAAA" inputMode="numeric" autoComplete="cc-exp-year" />
-        <input required name="cvv" placeholder="CVV" inputMode="numeric" autoComplete="cc-csc" />
+        <input required name="exp-month" placeholder="MM" inputMode="numeric" autoComplete="cc-exp-month" maxLength={2} onInput={keepDigits(2)} />
+        <input required name="exp-year" placeholder="AA" inputMode="numeric" autoComplete="cc-exp-year" maxLength={2} onInput={keepDigits(2)} />
+        <input required name="cvv" placeholder="CVV" inputMode="numeric" autoComplete="cc-csc" maxLength={4} onInput={keepDigits(4)} />
         <button type="submit">Pagar com cartão</button>
       </form>
     </>

@@ -5,7 +5,7 @@ const multer = require('multer');
 const { randomUUID } = require('crypto');
 const db = require('../db');
 const { authRequired, authOptional, isAdminRole, emailVerifiedRequired } = require('../middleware');
-const { serializeListing, isFavorited, pixPayload, confirmPaymentRecord, listingRating, findPromo, promoUsable, normalizePromoCode, LISTING_TYPES, listingTypeOf, expireStalePayments, listingPayment } = require('../helpers');
+const { serializeListing, isFavorited, pixPayload, confirmPaymentRecord, listingRating, findPromo, promoUsable, normalizePromoCode, LISTING_TYPES, listingTypeOf, expireStalePayments, listingPayment, invalidateRanking, invalidateRankingIfListingStatus } = require('../helpers');
 const { safeUser } = require('../middleware');
 const { LISTING_DAYS } = require('../seed');
 const { resolveCategory } = require('../categories');
@@ -13,6 +13,49 @@ const { getSettings, listingFee, vipListingFee, commonChargingEnabled, vipChargi
 const QRCode = require('qrcode');
 const listingSocial = require('../listingSocial');
 const intelligence = require('../intelligence');
+const { ensureThumb } = require('../thumbs');
+const { pageSlice } = require('../pagination');
+
+const pendingViews = new Map();
+const VIEW_FLUSH_MS = 5000;
+const VIEW_FLUSH_N = 50;
+let pendingViewTotal = 0;
+let viewsTimer = null;
+
+function flushPendingViews() {
+  if (viewsTimer) {
+    clearTimeout(viewsTimer);
+    viewsTimer = null;
+  }
+  if (!pendingViews.size) return;
+  const entries = Array.from(pendingViews.entries());
+  pendingViews.clear();
+  pendingViewTotal = 0;
+  db.batch(() => {
+    entries.forEach(([id, n]) => {
+      const row = db.findById('listings', id);
+      if (row && n) db.update('listings', id, { views: (row.views || 0) + n });
+    });
+  });
+}
+
+function bumpListingView(id) {
+  pendingViews.set(id, (pendingViews.get(id) || 0) + 1);
+  pendingViewTotal += 1;
+  if (pendingViewTotal >= VIEW_FLUSH_N) {
+    flushPendingViews();
+    return;
+  }
+  if (!viewsTimer) {
+    viewsTimer = setTimeout(() => {
+      viewsTimer = null;
+      flushPendingViews();
+    }, VIEW_FLUSH_MS);
+    if (viewsTimer.unref) viewsTimer.unref();
+  }
+}
+
+db.onClose(flushPendingViews);
 
 function publicPayment(p) {
   if (!p) return null;
@@ -253,7 +296,7 @@ function findSellers(q) {
   const search = searchText(q.q || q.search);
   if (search.length < 2) return [];
   const terms = search.split(' ').filter(Boolean);
-  const published = db.findWhere('listings', (l) => l.status === 'published' && !official.isOfficialListing(l));
+  const published = db.byFk('listings', 'status', 'published').filter((l) => !official.isOfficialListing(l));
   const counts = new Map();
   published.forEach((l) => counts.set(l.userId, (counts.get(l.userId) || 0) + 1));
   return db
@@ -300,7 +343,13 @@ router.get('/mine', authRequired, (req, res) => {
   let list = db.findWhere('listings', (l) => l.userId === req.user.id);
   if (status) list = list.filter((l) => l.status === status);
   list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  res.json({ items: list.map((l) => serializeListing(l, { user: req.user, userId: req.user.id })) });
+  const page = pageSlice(list, req.query);
+  res.json({
+    items: page.items.map((l) => serializeListing(l, { user: req.user, userId: req.user.id })),
+    total: page.total,
+    page: page.page,
+    limit: page.limit,
+  });
 });
 
 // Palavras que indicam produto proibido/suspeito. Análise para moderação, não bloqueio automático.
@@ -478,12 +527,14 @@ router.get('/:id', authOptional, (req, res) => {
     return res.status(404).json({ error: 'Anúncio não encontrado.' });
   }
   if (l.status === 'published') {
-    db.update('listings', l.id, { views: (l.views || 0) + 1 });
-    l.views = (l.views || 0) + 1;
+    bumpListingView(l.id);
     intelligence.trackEvent({ type: 'view', req, user: req.user, listing: l });
   }
   const uid = req.user && req.user.id;
-  res.json(serializeListing(l, { favorited: isFavorited(uid, l.id), userId: uid, user: req.user }));
+  const storedViews = (db.findById('listings', l.id) || l).views || 0;
+  const payload = serializeListing(l, { favorited: isFavorited(uid, l.id), userId: uid, user: req.user });
+  payload.views = storedViews + (pendingViews.get(l.id) || 0);
+  res.json(payload);
 });
 
 router.get('/:id/reviews', authOptional, (req, res) => {
@@ -536,6 +587,7 @@ router.post('/:id/reviews', authRequired, (req, res) => {
       createdAt: now,
       updatedAt: now,
     });
+    invalidateRanking();
   }
   res.json({
     review: row,
@@ -543,7 +595,7 @@ router.post('/:id/reviews', authRequired, (req, res) => {
   });
 });
 
-router.post('/', authRequired, emailVerifiedRequired, upload.array('photos', MAX_PHOTOS), (req, res) => {
+router.post('/', authRequired, emailVerifiedRequired, upload.array('photos', MAX_PHOTOS), async (req, res) => {
   const b = req.body || {};
   const listingType = LISTING_TYPES.includes(b.listingType) ? b.listingType : (b.acceptsTrade === 'true' || b.acceptsTrade === true ? 'venda_troca' : 'venda');
   if (!b.title || !b.description || !b.categoryId || b.price === undefined || b.price === '') {
@@ -625,16 +677,20 @@ router.post('/', authRequired, emailVerifiedRequired, upload.array('photos', MAX
     }, req.user);
   } catch {}
 
-  files.forEach((f, idx) => {
+  for (let idx = 0; idx < files.length; idx++) {
+    const f = files[idx];
+    const url = `/uploads/${f.filename}`;
+    const thumbUrl = (await ensureThumb(path.join(UPLOADS, f.filename), url)) || url;
     db.insert('listingImages', {
       listingId: listing.id,
-      url: `/uploads/${f.filename}`,
+      url,
+      thumbUrl,
       color: '#E85D04',
       label: listing.title,
       emoji: '',
       order: idx,
     });
-  });
+  }
 
   const kind = listing.premium ? 'premium_listing' : (listing.vip ? 'vip_listing' : 'listing');
   const mustPay = listing.premium ? premiumOn : (listing.vip ? vipOn : commonOn);
@@ -682,7 +738,7 @@ router.post('/', authRequired, emailVerifiedRequired, upload.array('photos', MAX
   });
 });
 
-router.put('/:id', authRequired, upload.array('photos', MAX_PHOTOS), (req, res) => {
+router.put('/:id', authRequired, upload.array('photos', MAX_PHOTOS), async (req, res) => {
   const l = db.findById('listings', req.params.id);
   if (!l) return res.status(404).json({ error: 'Anúncio não encontrado.' });
   if (isOfficialListing(l)) {
@@ -742,16 +798,20 @@ router.put('/:id', authRequired, upload.array('photos', MAX_PHOTOS), (req, res) 
     if (existing.length + files.length > MAX_PHOTOS) {
       return res.status(400).json({ error: 'No máximo 8 fotos por anúncio.' });
     }
-    files.forEach((f, idx) => {
+    for (let idx = 0; idx < files.length; idx++) {
+      const f = files[idx];
+      const url = `/uploads/${f.filename}`;
+      const thumbUrl = (await ensureThumb(path.join(UPLOADS, f.filename), url)) || url;
       db.insert('listingImages', {
         listingId: l.id,
-        url: `/uploads/${f.filename}`,
+        url,
+        thumbUrl,
         color: '#E85D04',
         label: l.title,
         emoji: '',
         order: existing.length + idx,
       });
-    });
+    }
   }
   const listingType = patch.listingType || l.listingType;
   const isWant = listingType === 'procuro';
@@ -777,6 +837,7 @@ router.put('/:id', authRequired, upload.array('photos', MAX_PHOTOS), (req, res) 
     }
   }
   const updated = db.update('listings', l.id, patch);
+  invalidateRankingIfListingStatus(l.status, updated && updated.status);
   try {
     if (updated && updated.quickOfferEnabled) {
       require('../lance').onListingCreated(updated, {
@@ -839,6 +900,7 @@ router.post('/:id/status', authRequired, (req, res) => {
   }
   patch.status = status;
   const updated = db.update('listings', l.id, patch);
+  invalidateRankingIfListingStatus(l.status, updated && updated.status);
   const out = serializeListing(updated);
   if (['sold', 'traded', 'negotiated'].includes(updated.status) && ['sold', 'traded', 'negotiated'].includes(action)) {
     try {
@@ -956,6 +1018,7 @@ router.delete('/:id', authRequired, (req, res) => {
     return res.status(403).json({ error: 'Sem permissão.' });
   }
   db.update('listings', l.id, { status: 'cancelled' });
+  invalidateRankingIfListingStatus(l.status, 'cancelled');
   res.json({ ok: true });
 });
 

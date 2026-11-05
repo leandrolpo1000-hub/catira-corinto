@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, money, formatBRLInput, parseBRL, condLabel } from '../api';
+import { PAGE } from '../pageSize';
 
 const PROVIDERS = [
   ['catira', 'Catira'],
@@ -33,6 +34,9 @@ function toLabel(value) {
 
 export default function AdminOfficial() {
   const [items, setItems] = useState([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const adminLimit = PAGE.admin;
   const [cats, setCats] = useState([]);
   const [cities, setCities] = useState([]);
   const [err, setErr] = useState('');
@@ -47,14 +51,18 @@ export default function AdminOfficial() {
   const [meliBusy, setMeliBusy] = useState(false);
   const [meliApp, setMeliApp] = useState({ clientId: '', clientSecret: '', redirectUri: '' });
 
-  async function load() {
+  async function load(nextPage) {
+    const p = nextPage == null ? page : nextPage;
+    const qs = 'page=' + encodeURIComponent(String(p)) + '&limit=' + encodeURIComponent(String(adminLimit));
     const [list, cs, ct, st] = await Promise.all([
-      api('/api/admin/official/products'),
+      api('/api/admin/official/products?' + qs),
       api('/api/admin/categories').catch(() => ({ items: [] })),
       api('/api/auth/cities').catch(() => []),
       api('/api/admin/official/meli/status').catch((e) => ({ configured: false, connected: false, error: e.message })),
     ]);
     setItems(list.items || []);
+    setTotal(typeof list.total === 'number' ? list.total : (list.items || []).length);
+    if (typeof list.page === 'number') setPage(list.page);
     setCats(cs.items || []);
     setCities(Array.isArray(ct) ? ct : []);
     setMeli(st);
@@ -476,6 +484,7 @@ export default function AdminOfficial() {
             <button type="button" className="btn btn-primary" onClick={openCreate}>Novo produto oficial</button>
           </div>
           {!items.length && <p className="hint">Nenhum produto oficial cadastrado.</p>}
+          {total > 0 && <p className="hint">{items.length} de {total} produto{total === 1 ? '' : 's'}</p>}
           {items.map((p) => (
             <div key={p.id} className="official-admin-card">
               <div className="official-admin-head">
@@ -518,6 +527,13 @@ export default function AdminOfficial() {
               </div>
             </div>
           ))}
+          {total > adminLimit && (
+            <div className="row-btns" style={{ marginTop: 12 }}>
+              <button className="btn btn-ghost" type="button" disabled={page <= 1} onClick={() => { const n = Math.max(1, page - 1); setPage(n); load(n); }}>Anterior</button>
+              <span className="hint">Página {page} de {Math.max(1, Math.ceil(total / adminLimit))} · {total}</span>
+              <button className="btn btn-ghost" type="button" disabled={page >= Math.max(1, Math.ceil(total / adminLimit))} onClick={() => { const n = page + 1; setPage(n); load(n); }}>Ver mais</button>
+            </div>
+          )}
         </>
       )}
 

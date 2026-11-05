@@ -4,6 +4,7 @@ import { api, money } from '../api';
 import { useAuth } from '../auth';
 import { BrandLogo, Top } from '../components';
 import { useConfig } from '../config';
+import { formatPhoneBr } from '../masks';
 
 export function Login() {
   const { login, user } = useAuth();
@@ -111,7 +112,17 @@ export function Register() {
           <div className="field"><label>Nome</label><input value={form.name} onChange={(e) => set('name', e.target.value)} required /></div>
           <div className="field"><label>E-mail</label><input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} required /></div>
           <div className="field"><label>Confirme o e-mail</label><input type="email" value={form.emailConfirm} onChange={(e) => set('emailConfirm', e.target.value)} required /></div>
-          <div className="field"><label>Telefone / WhatsApp</label><input value={form.phone} onChange={(e) => set('phone', e.target.value)} required /></div>
+          <div className="field">
+            <label>Telefone / WhatsApp</label>
+            <input
+              value={form.phone}
+              onChange={(e) => set('phone', formatPhoneBr(e.target.value))}
+              required
+              inputMode="tel"
+              autoComplete="tel"
+              placeholder="(38) 99999-9999"
+            />
+          </div>
           <div className="field">
             <label>Cidade</label>
             <select value={form.city} onChange={(e) => set('city', e.target.value)}>

@@ -100,9 +100,9 @@ checkout.post('/sessions', authRequired, denyPublic);
 checkout.get('/sessions/:id', authRequired, denyPublic);
 
 function attachAdmin(adminRouter) {
-  adminRouter.get('/orders', adminRequired, (_req, res) => {
+  adminRouter.get('/orders', adminRequired, (req, res) => {
     const orders = require('../orders');
-    res.json({ items: orders.listOrdersAdmin() });
+    res.json(orders.listOrdersAdmin(req.query));
   });
   adminRouter.get('/orders/:id', adminRequired, (req, res) => {
     const orders = require('../orders');

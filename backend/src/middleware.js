@@ -75,7 +75,7 @@ function safeUser(u) {
     ratingAvg: rest.ratingAvg,
     ratingCount: rest.ratingCount,
     avatarColor: rest.avatarColor,
-    listingsCount: db.count('listings', (l) => l.userId === u.id && l.status === 'published'),
+    listingsCount: db.byFk('listings', 'userId', u.id).filter((l) => l.status === 'published').length,
   };
 }
 

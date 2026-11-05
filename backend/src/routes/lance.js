@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { authRequired, adminRequired, masterRequired, publicUser, isAdminRole } = require('../middleware');
 const lance = require('../lance');
+const { pageSlice } = require('../pagination');
 
 const router = express.Router();
 
@@ -80,7 +81,7 @@ router.get('/hub', authRequired, (req, res) => {
     return res.status(403).json({ error: 'Acesso restrito a catireiros credenciados.' });
   }
   const items = lance.hubList(req.query || {}, req.user);
-  res.json({ items, total: items.length });
+  res.json(pageSlice(items, req.query));
 });
 
 router.get('/hub/:id', authRequired, (req, res) => {
@@ -161,7 +162,7 @@ router.get('/mine', authRequired, (req, res) => {
       opportunity: opp ? lance.serializeOpportunity(opp, { dealerId: req.user.id }) : null,
     };
   });
-  res.json({ items });
+  res.json(pageSlice(items, req.query));
 });
 
 router.get('/seller', authRequired, (req, res) => {
